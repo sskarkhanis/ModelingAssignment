@@ -104,17 +104,21 @@ colSums(is.na(complaints))#result below
 #~26% of missing data in column SolutionType
 #~60% of missing data in column FeedbackType
 
-################################################
-#Tranforming the Subscriptions table
-################################################
-
-#We can create RFM variables based on Subscriptions table & dummy variables for other catergorical variables
+#<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+#Steps for creating Base Table
+#<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 #For this we need to,
 # 01 select cust active @ end of indep period
 # 02 then only focus on ALL ASPECTS(R,F,M) of these customers
 # 03 I created some other Indep var based on Payment Type, Gender, Complaints, Delivery, Credit tables
 # 04 NOT TO FORGET, CREATING DEPENDENT var (we wait for instruction fom professor)
 # 05 once, 01 ,02, 03, 04 are complete, we can merge all to create BASETABLE
+
+
+################################################
+#Tranforming the Subscriptions table
+################################################
+#We can create RFM variables based on Subscriptions table & dummy variables for other catergorical variables
 
 ################################################
 #Tranforming the Complaints table
