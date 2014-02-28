@@ -26,8 +26,8 @@ formula <-read.table("formula.txt", header=TRUE, sep=";",colClasses=c("character
 credit <-read.table("credit.txt", header=TRUE, sep=";",colClasses=c("character","character","character","character","numeric","numeric"),na.strings = "NA" )
 
 #Complaints
-complaints <-read.table("complaints.txt", header=TRUE, sep=";",colClasses=c("character","character","character","character","numeric","numeric","numeric" ))#,na.strings = "NA" )
-
+complaints <-read.table("complaints.txt", header=TRUE, sep=";",colClasses=c("character","character","character","character","character","character","character" ))
+complaints[complaints==""]  <- NA
 #################################################
 # DEFINING THE TIME WINDOW
 #################################################
@@ -119,6 +119,8 @@ colSums(is.na(complaints))#result below
 #~26% of missing data in column SolutionType
 #~60% of missing data in column FeedbackType
 
+complaints2 <- subset(complaints, ComplaintDate <= end_IP)
+
 #<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 #Steps for creating Base Table
 #<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
@@ -129,21 +131,10 @@ colSums(is.na(complaints))#result below
 # 04 NOT TO FORGET, CREATING DEPENDENT var (we wait for instruction from professor)
 # 05 once, 01 ,02, 03, 04 are complete, we can merge all to create BASETABLE
 
-####################################################################################
-#Step 01 the customers have to be active during the end of the independent period
-####################################################################################
-#subscription$StartDate <= end_IP
-#subscription$EndDate > start_DP or subscription$EndDate is missing
-
-active_Customers <- data.frame(subset(subscriptions, (StartDate <= end_IP & (EndDate > start_DP | EndDate==NA)),select = CustomerID))
 
 ################################################
 #Creating Independent variables
 ################################################
-Amountlines_timewindow <- data.frame(subset(subscriptions,(PaymentDate <= end_IP)))
-
-#sorting Amountlines_timewindow
-Amountlines_timewindow <- Amountlines_timewindow[order(Amountlines_timewindow[,2],Amountlines_timewindow[,12]),]
 
 # Renewal Frequency 
 renewal_frequency <- data.frame(table(Amountlines_timewindow$CustomerID))
@@ -168,7 +159,7 @@ Amountlines_timewindow3$Recency <- end_IP - Amountlines_timewindow3$PaymentDate
 ################Age
 
 cust_age <- subset(customers,select=c(CustomerID, DOB))
-cust_age$age <- (Sys.Date() - cust_age$DOB)
+cust_age$age <- (end_IP - cust_age$DOB)
 cust_age$DOB <- NULL
 
 ################LOR
@@ -183,11 +174,10 @@ Amountlines_ED <- data.frame(Amountlines_ED$CustomerID, Amountlines_ED$EndDate)
 #renaming variables
 
 colnames(Amountlines_SD)[1:2] <- c('CustomerID','StartDate')
-colnames(Amountlines_SD)[1:2] <- c('CustomerID','EndDate')
+colnames(Amountlines_ED)[1:2] <- c('CustomerID','EndDate')
 #removing dups
 Amountlines_SD <- Amountlines_SD[ !duplicated(Amountlines_SD$CustomerID,fromLast=FALSE),]
 Amountlines_ED <- Amountlines_ED[ !duplicated(Amountlines_ED$CustomerID,fromLast=FALSE),]
-
 
 Cust_LOR <- merge(Amountlines_SD,Amountlines_ED,all=TRUE)
 Cust_LOR$LOR <- (Cust_LOR$EndDate - Cust_LOR$StartDate)
@@ -212,16 +202,17 @@ customers$Impu_Gender <- customers$Gender_M + customers$Gender_NA
 
 #Finding Nr of Complaints per customer
 (a <- Sys.time())
-nr_complaints_per_cust <- data.frame(table(complaints$CustomerID))
+#nr_complaints_per_cust <- data.frame(table(complaints$CustomerID))
+tot_nr_complaints <- aggregate(complaints$ComplaintID, complaints['CustomerID'], FUN=length)
 Sys.time() - a
-colnames(nr_complaints_per_cust)[1] <- "CustomerID"
-colnames(nr_complaints_per_cust)[2] <- "Nr_Complaints"
+colnames(tot_nr_complaints)[1:2] <- c("CustomerID","Nr_Complaints")
+
  
 #Finding #days since last complaint
 
 last_complaints <- aggregate(complaints$ComplaintDate, complaints['CustomerID'], FUN=max)
 colnames(last_complaints)[2] <- "ComplaintDate"
-last_complaints$nr_days_since_last_complaint <- Sys.Date() - last_complaints$ComplaintDate
+last_complaints$nr_days_since_last_complaint <- end_IP - last_complaints$ComplaintDate
 
 # % of complaints solved = nr(solution type) / nr (complaint type)
 complaints_type <- aggregate(complaints$ComplaintType, complaints['CustomerID'], FUN=length)
@@ -230,6 +221,24 @@ colnames(complaints_type)[2] <- "c_t"
 colnames(solution_type)[2] <- "s_t"
 complaints_solved <- merge(complaints_type,solution_type,all=TRUE)
 complaints_solved$c_s <- (solution_type$s_t/complaints_type$c_t)
+
+#split per complaint type
+complaint_type <- aggregate(complaints$ComplaintType, complaints['CustomerID'], table)
+complaint_type <- as.data.frame(sapply(complaint_type,unlist))
+
+#auto-renaming the columns in complaint type
+vars1 <- colnames(complaint_type[, names(complaint_type) != 'CustomerID'])
+new1  <- sapply(vars1, function(x) paste('ct_per_complaint_type_', x, sep=''))
+colnames(complaint_type) <- c(names(complaint_type)[1], new1) #understand
+
+#split per solution type
+solution_type <- aggregate(complaints$SolutionType, complaints['CustomerID'], table)
+solution_type <- as.data.frame(sapply(solution_type,unlist))
+
+#auto-renaming the columns in solution type
+vars2 <- colnames(solution_type[, names(solution_type) != 'CustomerID'])
+new2  <- sapply(vars2, function(x) paste('ct_per_solution_ype_', x, sep=''))
+colnames(solution_type) <- c(names(solution_type)[1], new2) #understand
 ############Tranforming the Credit table############
 
 #Finding Total credit amount per subscription, Total # news papers credited,
@@ -241,7 +250,7 @@ colnames(tmp_credit)[2] <- "Amount"
 colnames(tmp_credit)[3] <- "NbrNewspapers"
 
 #Summing the amount & # news papers
-total_amt_newspapers_per_subscriptionn <- data.frame (aggregate(tmp_credit[,names(tmp_credit) != 'SubscriptionID'], by=list(ID=tmp_credit$SubscriptionID),sum))
+total_amt_newspapers_per_subscription <- data.frame (aggregate(tmp_credit[,names(tmp_credit) != 'SubscriptionID'], by=list(ID=tmp_credit$SubscriptionID),sum))
 #removing tmp_credit to save space
 rm(tmp_credit)
 
@@ -278,3 +287,21 @@ aggr_ct_Duration <- aggr_ct_Duration[order(aggr_ct_Duration[,1]),]
 aggr_Formula <- merge(x=aggr_ct_reg_cam,y=aggr_ct_Duration, by="CustomerID",all=TRUE, incomparables = NA)
 colnames(aggr_Formula)[2]<-"cam_ct"
 colnames(aggr_Formula)[3]<-"reg_ct"
+
+
+
+################################################
+#Creating Dependent variables
+################################################
+#sort subscriptions based on cust id and first start date
+#sort subscriptions based on cust id and last end date
+
+#Step 01 the customers have to be active during the end of the independent period
+
+#active_Customers <- data.frame(subset(subscriptions, (StartDate <= end_IP & (EndDate > start_DP | EndDate==NA)),select = CustomerID))
+
+first_startdate <- aggregate(subscriptions["StartDate"], subscriptions['CustomerID'], FUN=min)
+last_enddate <- aggregate(subscriptions["EndDate"], subscriptions['CustomerID'], FUN=max)
+cust = merge(first_startdate, last_enddate, by='CustomerID')
+active_Customers  <- subset(cust,(StartDate <= end_IP & EndDate >= start_DP))
+churned_Customers <- subset(active_Customers, EndDate<= end_DP)
