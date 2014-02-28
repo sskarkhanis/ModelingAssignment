@@ -1,16 +1,14 @@
-#install.packages("aCRM")
-install.packages("dummies", repos="http://cran.rstudio.com/") 
-library("dummies")
-library("aCRM")
-library("randomForest")
-#packages = c("aCRM", "sdsd")
-#library(l[1], character.only=TRUE)
+#install.packages("")
+packages = c("aCRM", "dummies", "randomForest", "rpart")
+for (p in packages){
+  require(p, character.only=TRUE)
+}
 
 # Functions
 mvProp <- function(v){
   sum(is.na(v))/length(v)
 }
-get("credit")setwd('/home/xclyde/Courses/UGENT/Modeling/Assignment')
+setwd('/home/xclyde/Courses/UGENT/Modeling/Assignment')
 
 # Complaints import
 complaints <- read.table("complaints.txt", header=TRUE, sep=";", colClasses=c("character", "character", "character", "character", "character", "character", "character"))
@@ -38,6 +36,7 @@ customers <- read.table("customers.txt", header=TRUE, sep=";", colClasses=c("cha
 
 # Delivery import
 delivery <- read.table("delivery.txt", header=TRUE, sep=";", colClasses=c("character", "factor", "factor", "factor", "character", "character"))
+delivery <- delivery[1:(nrow(delivery)*0.2),]
 #dim(delivery)
 #str(delivery)
 #head(delivery)
@@ -124,62 +123,63 @@ for(p in predictors){
 
 
 # Number of subscriptions per customers
-subscriptionsNb = aggregate(list(subscriptionsNb=subscriptions$StartDate), subscriptions["CustomerID"], length)
+subscriptionsNb = aggregate(list(SubscriptionsNb=subscriptions$StartDate), subscriptions["CustomerID"], length)
 subscriptionsBT = merge(subscriptionsBT, subscriptionsNb, by="CustomerID")
 
 # Mean subscription duration
 subscriptions["Duration"] <- subscriptions["EndDate"] - subscriptions["StartDate"]
-meanSubDuration = aggregate(list(meanSubDuration=subscriptions$Duration), subscriptions["CustomerID"], mean)
-meanSubDuration[,"meanSubDuration"] = round(meanSubDuration[,"meanSubDuration"], 2)
+meanSubDuration = aggregate(list(MeanSubDuration=subscriptions$Duration), subscriptions["CustomerID"], mean)
+meanSubDuration[,"MeanSubDuration"] = round(meanSubDuration[,"MeanSubDuration"], 2)
 subscriptionsBT = merge(subscriptionsBT, meanSubDuration, by="CustomerID")
 
 # Mean number of newspapers
-meanNbrNP = aggregate(list(meanNbrNP=subscriptions$NbrNewspapers), subscriptions["CustomerID"], mean)
-meanNbrNP[,"meanNbrNP"] = round(meanNbrNP[,"meanNbrNP"], 2)
+meanNbrNP = aggregate(list(MeanNbrNP=subscriptions$NbrNewspapers), subscriptions["CustomerID"], mean)
+meanNbrNP[,"MeanNbrNP"] = round(meanNbrNP[,"MeanNbrNP"], 2)
 subscriptionsBT = merge(subscriptionsBT, meanNbrNP, by="CustomerID")
 
 # Mean number of start newspapers
-meanNbrStartNP = aggregate(list(meanNbrStartNP=subscriptions$NbrStart), subscriptions["CustomerID"], mean)
-meanNbrStartNP[,"meanNbrStartNP"] = round(meanNbrStartNP[,"meanNbrStartNP"], 2)
+meanNbrStartNP = aggregate(list(MeanNbrStartNP=subscriptions$NbrStart), subscriptions["CustomerID"], mean)
+meanNbrStartNP[,"MeanNbrStartNP"] = round(meanNbrStartNP[,"MeanNbrStartNP"], 2)
 subscriptionsBT = merge(subscriptionsBT, meanNbrStartNP, by="CustomerID")
 
 # RenewalDate
 #?
 
 # Number of payment type
-nbrPaymentType = aggregate(subscriptions$PaymentType, subscriptions["CustomerID"], table)
+nbrPaymentType = aggregate(subscriptions["PaymentType"], subscriptions["CustomerID"], table)
 nbrPaymentType = sapply(nbrPaymentType, unlist)
 subscriptionsBT = merge(subscriptionsBT, nbrPaymentType, by="CustomerID")
 
 # Number of payment status
-nbrPaymentStatus = aggregate(subscriptions$PaymentStatus, subscriptions["CustomerID"], table)
+nbrPaymentStatus = aggregate(subscriptions["PaymentStatus"], subscriptions["CustomerID"], table)
 nbrPaymentStatus = sapply(nbrPaymentStatus, unlist)
 subscriptionsBT = merge(subscriptionsBT, nbrPaymentStatus, by="CustomerID")
 
 # Mean time before payment
 subscriptions["PaymentTime"] <- subscriptions["PaymentDate"] - subscriptions["StartDate"]
-meanPayTime= aggregate(list(meanPayTime=subscriptions$PaymentTime), subscriptions["CustomerID"], mean)
-meanPayTime[,"meanPayTime"] = round(meanPayTime[,"meanPayTime"], 2)
+meanPayTime= aggregate(list(MeanPayTime=subscriptions$PaymentTime), subscriptions["CustomerID"], mean)
+meanPayTime[,"MeanPayTime"] = round(meanPayTime[,"MeanPayTime"], 2)
 subscriptionsBT = merge(subscriptionsBT, meanPayTime, by="CustomerID")
 
-# Mean net formula price
-meanNetForPrice = aggregate(list(meanNetForPrice=subscriptions$NetFormulaPrice), subscriptions["CustomerID"], mean)
-meanNetForPrice[,"meanNetForPrice"] = round(meanNetForPrice[,"meanNetForPrice"], 2)
-subscriptionsBT = merge(subscriptionsBT, meanNetForPrice, by="CustomerID")
+# Mean and total net formula price
+meanNetForPrice = aggregate(list(MeanNetForPrice=subscriptions$NetFormulaPrice), subscriptions["CustomerID"], mean)
+meanNetForPrice[,"MeanNetForPrice"] = round(meanNetForPrice[,"MeanNetForPrice"], 2)
+TotNetForPrice = aggregate(list(totNetForPrice=subscriptions$NetFormulaPrice), subscriptions["CustomerID"], sum)
+subscriptionsBT = Reduce(function(x, y) merge(x, y, by="CustomerID"), list(subscriptionsBT, meanNetForPrice, totNetForPrice))
 
 # Mean total credit
-meanTotCredit = aggregate(list(meanTotCredit=subscriptions$TotalCredit), subscriptions["CustomerID"], mean)
-meanTotCredit[,"meanTotCredit"] = round(meanTotCredit[,"meanTotCredit"], 2)
+meanTotCredit = aggregate(list(MeanTotCredit=subscriptions$TotalCredit), subscriptions["CustomerID"], mean)
+meanTotCredit[,"MeanTotCredit"] = round(meanTotCredit[,"MeanTotCredit"], 2)
 subscriptionsBT = merge(subscriptionsBT, meanTotCredit, by="CustomerID")
 
 ########
 # Base table generation: credit
 ########
 
-credit$ProcessingDate <- as.Date(credit$ProcessingDate,"%d/%m/%Y")
-
 # Missing values
 credit[credit==""]  <- NA
+
+credit$ProcessingDate <- as.Date(credit$ProcessingDate,"%d/%m/%Y")
 
 # Columns for which the missing values should be replaced by mean/mode
 missToMean = c("ActionType", "CreditSource")
@@ -210,16 +210,16 @@ for(p in predictors){
 }
 
 # Per subscriptions: Number of credits
-creditNb = aggregate(list(creditNb=credit$ActionType), credit["SubscriptionID"], length)
+creditNb = aggregate(list(CreditNb=credit$ActionType), credit["SubscriptionID"], length)
 creditBT = merge(creditBT, creditNb, by="SubscriptionID")
 
 # Per subscriptions: Number of action type
-nbrCreActionType = aggregate(credit$ActionType, credit["SubscriptionID"], table)
+nbrCreActionType = aggregate(credit["ActionType"], credit["SubscriptionID"], table)
 nbrCreActionType = sapply(nbrCreActionType, unlist)
 creditBT = merge(creditBT, nbrCreActionType, by="SubscriptionID")
 
 # Per subscriptions: Number of credit source
-nbrCreSource = aggregate(credit$CreditSource, credit["SubscriptionID"], table)
+nbrCreSource = aggregate(credit["CreditSource"], credit["SubscriptionID"], table)
 nbrCreSource = sapply(nbrCreSource, unlist)
 creditBT = merge(creditBT, nbrCreSource, by="SubscriptionID")
 
@@ -241,6 +241,11 @@ creditBT = aggregate(subCre, creditBT["CustomerID"], sum)
 # Missing values
 delivery[delivery==""]  <- NA
 
+# Delete the empty levels in the factor variables 
+for(n in names(delivery)){
+  if(is.factor(delivery[,n])) delivery[,n] <- factor(delivery[,n])
+}
+
 # Per subscriptions: Missing values
 predictors = c("DeliveryType", "DeliveryClass", "DeliveryContext")
 predTable = subset(delivery, select=(predictors))
@@ -257,7 +262,7 @@ for(p in predictors){
 }
 
 # Per subscriptions: Number of deliveries
-deliveryNb = aggregate(list(deliveryNb=delivery$DeliveryType), delivery["SubscriptionID"], length)
+deliveryNb = aggregate(list(DeliveryNb=delivery$DeliveryType), delivery["SubscriptionID"], length)
 
 # Per subscriptions: Number of delivery type
 #nbrDelType = aggregate(delivery$DeliveryType, delivery["SubscriptionID"], table)
@@ -302,3 +307,17 @@ subBaseTable = list(subscriptionsBT, creditBT, deliveryBT)
 baseTable = Reduce(function(x, y) merge(x, y, by='CustomerID', all=TRUE), subBaseTable)
 baseTable <- imputeMissings(baseTable)
 print(Sys.time()-StartTime)
+
+########
+# Modeling
+########
+
+trainind <- sample(1:nrow(baseTable),round(0.5*nrow(baseTable)))
+
+trainTable <- baseTable[trainind,]
+testTable <- baseTable[-trainind,]
+trainTable$CustomerID <- NULL
+testTable$CustomerID <- NULL
+
+BDT <- rpart(Retention ~ ., control=rpart.control(cp = 0.001), trainTable))
+table(predTree <- predict(BDT, testTable)[,2])
