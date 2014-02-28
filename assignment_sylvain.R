@@ -1,5 +1,5 @@
-#install.packages("")
-packages = c("aCRM", "dummies", "randomForest", "rpart")
+#install.packages("ada")
+packages = c("aCRM", "dummies", "randomForest", "rpart", "ROCR", "ada")
 for (p in packages){
   require(p, character.only=TRUE)
 }
@@ -8,6 +8,8 @@ for (p in packages){
 mvProp <- function(v){
   sum(is.na(v))/length(v)
 }
+
+# load('baseTable.Rdata')
 
 # Complaints import
 complaints <- read.table("complaints.txt", header=TRUE, sep=";", colClasses=c("character", "character", "character", "character", "factor", "factor", "factor"))
@@ -32,22 +34,18 @@ StartTime = Sys.time()
 ########
 
 # setting the format for date
-DateFormat <- "%d/%m/%Y"
+dateFormat <- "%d/%m/%Y"
 
 #start of indep period
-StartIP <- as.Date("02/01/2006", DateFormat)
-
+startIP <- as.Date("02/01/2006", dateFormat)
 #end of indep period
-EndIP <- as.Date("28/12/2010", DateFormat)
-
-#keeping a gap of 1 month between the Indep & Dep Periods
+endIP <- as.Date("01/02/2010", dateFormat)
 
 #dependent time period of 1 year
 #start of dep period
-StartDP <- as.Date("29/01/2011", DateFormat)
-
+startDP <- as.Date("03/02/2010", dateFormat)
 #end of dep period
-EndDP <- as.Date("28/01/2012", DateFormat)
+endDP <- as.Date("03/02/2011", dateFormat)
 
 ########
 # Base table generation: customers
@@ -58,27 +56,24 @@ EndDP <- as.Date("28/01/2012", DateFormat)
 #active_Customers <- data.frame(subset(subscriptions, (StartDate <= end_IP & (EndDate > start_DP | EndDate==NA)),select = CustomerID))
 
 subscriptions[subscriptions==""]  <- NA
-subscriptions$StartDate <- as.Date(subscriptions$StartDate,DateFormat)
-subscriptions$EndDate <- as.Date(subscriptions$EndDate,DateFormat)
-subscriptions$RenewalDate <- as.Date(subscriptions$RenewalDate,DateFormat)
-subscriptions$PaymentDate <- as.Date(subscriptions$PaymentDate,DateFormat)
+subscriptions$StartDate <- as.Date(subscriptions$StartDate,dateFormat)
+subscriptions$EndDate <- as.Date(subscriptions$EndDate,dateFormat)
+subscriptions$RenewalDate <- as.Date(subscriptions$RenewalDate,dateFormat)
+subscriptions$PaymentDate <- as.Date(subscriptions$PaymentDate,dateFormat)
 
-firstStartDate = aggregate(subscriptions["StartDate"], subscriptions['CustomerID'], min)
 lastEndDate = aggregate(subscriptions["EndDate"], subscriptions['CustomerID'], max)
-allCustomers = merge(firstStartDate, lastEndDate, by='CustomerID')
-activeCustomers = subset(allCustomers,(StartDate <= EndIP & EndDate >= StartDP))
-churnedCustomers = subset(activeCustomers, EndDate<= EndDP, select="CustomerID")
-churnedCustomers["Churn"] = 1
-activeCustomers = merge(activeCustomers["CustomerID"], churnedCustomers[c("CustomerID", "Churn")], by="CustomerID", all.x=TRUE)
-activeCustomers["Churn"][is.na(activeCustomers["Churn"])] <- 0 
-activeCustomers = merge(activeCustomers, customers, by="CustomerID")
+customers = merge(customers, lastEndDate, by="CustomerID")
+activeCustomers = subscriptions[subscriptions$StartDate<=endIP & subscriptions$EndDate>startDP, "CustomerID"]
+activeCustomers = data.frame(CustomerID=unique(activeCustomers))
+customers = merge(customers, activeCustomers, by="CustomerID")
+customers["Churn"] = as.factor(ifelse(customers$EndDate <= endDP, 1, 0))
 
-activeCustomers$DOB <- as.Date(activeCustomers$DOB,DateFormat)
+customers$DOB <- as.Date(customers$DOB,dateFormat)
 
 predictors = list("Gender", "DOB", "District")
-customersBT = subset(activeCustomers, select=(c("CustomerID", "Churn", unlist(predictors))))
+customersBT = subset(customers, select=c("CustomerID", "Churn", unlist(predictors)))
 for (j in predictors){
-  customersBT[paste("MV", j, sep="")] <- as.factor(is.na(activeCustomers[j]))
+  customersBT[paste("MV", j, sep="")] <- as.factor(is.na(customers[j]))
 }
 customersBT = imputeMissings(customersBT)
 customersBT$Age = Sys.Date() - customersBT$DOB
@@ -94,7 +89,7 @@ customersBT = dummy.data.frame(customersBT, c("Gender", "District"), sep='_')
 # Keep active subscriptions
 subscriptions = merge(subscriptions, customersBT["CustomerID"], by="CustomerID")
 # Keep subscriptions starting within the independent period
-subscriptions = subset(subscriptions, StartDate <= EndIP)
+subscriptions = subset(subscriptions, StartDate <= endIP)
 activeSubscriptions = subscriptions["SubscriptionID"]
 
 # Missing values
@@ -156,9 +151,9 @@ subscriptionsBT = merge(subscriptionsBT, meanNbrStartNP, by="CustomerID")
 # Mean renewal duration
 subscriptions["RenewDuration"] = subscriptions["EndDate"] - subscriptions["RenewalDate"]
 meanRenewDuration = aggregate(list(MeanRenewDuration=subscriptions$RenewDuration), subscriptions["CustomerID"], mean)
-meanRenewDuration[,"MeanRenewDuration"] = round(meanRenewDuration[,"MeanRenewDuration"], 2)
 subscriptionsBT = merge(subscriptionsBT, meanRenewDuration, by="CustomerID")
 subscriptionsBT["MeanRenewDuration"] = as.numeric(subscriptionsBT$MeanRenewDuration) / as.numeric(subscriptionsBT$TotSubDuration) 
+subscriptionsBT[,"MeanRenewDuration"] = round(subscriptionsBT[,"MeanRenewDuration"], 2)
 
 # Number of payment type
 nbrPaymentType = aggregate(subscriptions["PaymentType"], subscriptions["CustomerID"], table)
@@ -193,12 +188,12 @@ subscriptionsBT = merge(subscriptionsBT, meanTotCredit, by="CustomerID")
 
 credit[credit==""]  <- NA
 
-credit$ProcessingDate <- as.Date(credit$ProcessingDate, DateFormat)
+credit$ProcessingDate <- as.Date(credit$ProcessingDate, dateFormat)
 
 # Keep active credits
 credit = merge(credit, activeSubscriptions, by="SubscriptionID")
 # Keep credit starting within the independent period
-credit = subset(credit, ProcessingDate <= EndIP)
+credit = subset(credit, ProcessingDate <= endIP)
 
 # Missing values
 
@@ -261,12 +256,12 @@ creditBT = aggregate(subCre, creditBT["CustomerID"], sum)
 
 delivery[delivery==""]  <- NA
 
-delivery$StartDate <- as.Date(delivery$StartDate, DateFormat)
+delivery$StartDate <- as.Date(delivery$StartDate, dateFormat)
 
 # Keep active deliveries
 delivery = merge(delivery, activeSubscriptions, by="SubscriptionID")
 # Keep deliveries starting within the independent period
-delivery = subset(delivery, StartDate <= EndIP)
+delivery = subset(delivery, StartDate <= endIP)
 
 # Missing values
 
@@ -311,12 +306,12 @@ deliveryBT = aggregate(subDel, deliveryBT["CustomerID"], sum)
 
 complaints[complaints==""]  <- NA
 
-complaints$ComplaintDate <- as.Date(complaints$ComplaintDate, DateFormat)
+complaints$ComplaintDate <- as.Date(complaints$ComplaintDate, dateFormat)
 
 # Keep active complaints
 complaints = merge(complaints, activeCustomers["CustomerID"], by="CustomerID")
 # Keep complaints starting within the independent period
-complaints = subset(complaints, ComplaintDate <= EndIP)
+complaints = subset(complaints, ComplaintDate <= endIP)
 
 # Missing values
 
@@ -337,7 +332,7 @@ complaintsBT = merge(complaintsBT, complaintsNb, by="CustomerID")
 
 #Finding #days since last complaint
 lastComDates <- aggregate(list(LastComDate=complaints$ComplaintDate), complaints['CustomerID'], max)
-lastComDates$DaysSinceLastCom <- EndIP - lastComDates$LastComDate
+lastComDates$DaysSinceLastCom <- endIP - lastComDates$LastComDate
 lastComDates$LastComDate = NULL
 complaintsBT = merge(complaintsBT, lastComDates, by="CustomerID")
 
@@ -411,6 +406,7 @@ subBaseTable = list(customersBT, subscriptionsBT, creditBT, deliveryBT, complain
 baseTable = Reduce(function(x, y) merge(x, y, by='CustomerID', all=TRUE), subBaseTable)
 baseTable[is.na(baseTable)]  <- 0
 print(Sys.time()-StartTime)
+save(baseTable,file='baseTable.Rdata')
 
 ########
 # Modeling
@@ -418,10 +414,46 @@ print(Sys.time()-StartTime)
 
 trainind <- sample(1:nrow(baseTable),round(0.5*nrow(baseTable)))
 
+#fold1 <- sample(1:nrow(baseTable),round(0.3*nrow(baseTable)))
+#remaining_rows = as.numeric(row.names(baseTable[-trainind,]))
+#fold2 <- sample(remaining_rows,round(0.3*nrow(baseTable)))
+#fold3 = row.names(baseTable[c(-trainind, -trainind2),])
+
 trainTable <- baseTable[trainind,]
 testTable <- baseTable[-trainind,]
 trainTable$CustomerID <- NULL
 testTable$CustomerID <- NULL
 
+#####
+# Binary decision tree
+#####
 BDT <- rpart(Churn ~ ., control=rpart.control(cp = 0.001), trainTable)
-#table(predTree <- predict(BDT, testTable)[,2])
+
+# Prediction
+table(predictionTree <- predict(BDT, testTable)[,2])
+
+# Evaluation
+(AUC_tree <- performance(prediction(predictionTree, testTable$Churn),"auc")@y.values[[1]])
+plot(performance(prediction(predictionTree, testTable$Churn), "tpr", "fpr"))
+
+#####
+# Bagged decision tree
+#####
+treeBag <- list()
+# Bagged decision trees
+for (i in 1:10) {
+  # Bootstrap indicators
+  trainTableInd <- sample(1:nrow(trainTable),nrow(trainTable),replace=TRUE)
+  treeBag[[i]] <- rpart(Churn ~ ., trainTable[trainTableInd,])
+}
+
+# Prediction
+predTreebag <- data.frame(matrix(NA,nrow=nrow(testTable),ncol=10))
+for (i in 1:10) {
+  predTreebag[,i] <- predict(treeBag[[i]],testTable)[,2] 
+}
+predTreebagged <- rowMeans(predTreebag)
+
+# Evaluation
+(AUC_treebag <- performance(prediction(predTreebagged ,testTable$Churn),"auc")@y.values[[1]])
+plot(performance(prediction(predTreebagged, testTable$Churn), "tpr", "fpr"))
