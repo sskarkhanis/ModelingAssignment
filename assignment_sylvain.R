@@ -6,7 +6,7 @@ for (p in packages){
 
 # Functions
 mvProp <- function(v){
-  sum(is.na(v))/length(v)
+  sum(is.na(v))/length(v) 
 }
 
 # load('baseTable.Rdata')
@@ -56,31 +56,43 @@ endDP <- as.Date("03/02/2011", dateFormat)
 #active_Customers <- data.frame(subset(subscriptions, (StartDate <= end_IP & (EndDate > start_DP | EndDate==NA)),select = CustomerID))
 
 subscriptions[subscriptions==""]  <- NA
-subscriptions$StartDate <- as.Date(subscriptions$StartDate,dateFormat)
-subscriptions$EndDate <- as.Date(subscriptions$EndDate,dateFormat)
-subscriptions$RenewalDate <- as.Date(subscriptions$RenewalDate,dateFormat)
-subscriptions$PaymentDate <- as.Date(subscriptions$PaymentDate,dateFormat)
+vars1 <- which(names(subscriptions) %in% c("StartDate","EndDate","PaymentDate","RenewalDate"))
+subscriptions[,vars1] <- sapply(vars1,function(vars1) as.Date(subscriptions[,vars1],format=dateFormat),simplify=FALSE)
 
 lastEndDate = aggregate(subscriptions["EndDate"], subscriptions['CustomerID'], max)
-customers = merge(customers, lastEndDate, by="CustomerID")
+customers = merge(customers, lastEndDate, by="CustomerID") 
 activeCustomers = subscriptions[subscriptions$StartDate<=endIP & subscriptions$EndDate>startDP, "CustomerID"]
 activeCustomers = data.frame(CustomerID=unique(activeCustomers))
-customers = merge(customers, activeCustomers, by="CustomerID")
-customers["Churn"] = as.factor(ifelse(customers$EndDate <= endDP, 1, 0))
 
+#table containing active customers
+customers = merge(customers, activeCustomers, by="CustomerID") 
+
+#creating Dependent variable "Churn"
+customers["Churn"] = as.factor(ifelse(customers$EndDate <= endDP, 1, 0))
+#table(customers$Churn)
+#   0    1 
+#1958  164 
+#---->professors definition of churn
+subs$Churn <- ifelse((subs$StartDate >= start_dep & subs$StartDate <= end_dep),1,0 )
+
+#converting DOB to date format
 customers$DOB <- as.Date(customers$DOB,dateFormat)
 
 predictors = list("Gender", "DOB", "District")
+#creating dummy variables with prefix "MV" indicating if a var has missing values or not
 customersBT = subset(customers, select=c("CustomerID", "Churn", unlist(predictors)))
 for (j in predictors){
   customersBT[paste("MV", j, sep="")] <- as.factor(is.na(customers[j]))
 }
+
+#imputing missing values
 customersBT = imputeMissings(customersBT)
-customersBT$Age = Sys.Date() - customersBT$DOB
+#customersBT$Age = Sys.Date() - customersBT$DOB
+customersBT$Age = endIP - customersBT$DOB #calculate age as of endIP
 customersBT$DOB <- NULL
 
+#----. below, we can do with only Gender_M or Gender_F, we dont need both
 customersBT = dummy.data.frame(customersBT, c("Gender", "District"), sep='_')
-
 
 ########
 # Base table generation: subscriptions
@@ -105,6 +117,8 @@ missOther = c("RenewalDate", "PaymentDate")
 
 predictors = c(missToMean, missToZero, missOther)
 predTable = subset(subscriptions, select=(predictors))
+
+# ----> add comments what is done below and why?
 mvVars = sapply(predictors, function(x) paste("MV",x,sep=""))
 mvTable = aggregate(predTable, subscriptions["CustomerID"], function(x) round(sum(is.na(x))/length(x),2))
 subscriptionsBT = setNames(mvTable, c("CustomerID", mvVars))
@@ -118,9 +132,11 @@ subscriptions[, names(subscriptions) %in% missToZero] <- sub
 subscriptions[, names(subscriptions) %in% missToMean] <- imputeMissings(subscriptions[, names(subscriptions) %in% missToMean])
 
 # Impute missing renewal dates with end dates
+# !!!Dont think we should be imputing RenewalDates!!!!
 subscriptions$RenewalDate[is.na(subscriptions$RenewalDate)] <- subscriptions$EndDate[is.na(subscriptions$RenewalDate)]
 
 # Impute missing payment dates with end dates
+# !!!Dont think we should be imputing PaymentDates!!!!
 subscriptions$PaymentDate[is.na(subscriptions$PaymentDate)] <- subscriptions$EndDate[is.na(subscriptions$PaymentDate)]
 
 # Remove missing values indicators when there are no missing values
@@ -129,14 +145,15 @@ for(p in predictors){
 }
 
 # Number of subscriptions per customers
+#why is "list" needed in subscriptionsNb to assign the column name? - for my own understanding
 subscriptionsNb = aggregate(list(SubscriptionsNb=subscriptions$StartDate), subscriptions["CustomerID"], length)
 subscriptionsBT = merge(subscriptionsBT, subscriptionsNb, by="CustomerID")
 
 # Mean subscription duration
-subscriptions["Duration"] <- subscriptions["EndDate"] - subscriptions["StartDate"]
-totSubDuration = aggregate(list(TotSubDuration=subscriptions$Duration), subscriptions["CustomerID"], sum)
-totSubDuration[,"TotSubDuration"] = round(totSubDuration[,"TotSubDuration"], 2)
-subscriptionsBT = merge(subscriptionsBT, totSubDuration, by="CustomerID")
+subscriptions["Duration"] <- subscriptions["EndDate"] - subscriptions["StartDate"] ## Pourquoi???
+totSubDuration = aggregate(list(TotSubDuration=subscriptions$Duration), subscriptions["CustomerID"], sum) #mean instead of sum?
+totSubDuration[,"TotSubDuration"] = round(totSubDuration[,"TotSubDuration"], 2) ## Pourquoi???
+subscriptionsBT = merge(subscriptionsBT, totSubDuration, by="CustomerID") ##where is Mean subscription duration
 
 # Mean number of newspapers
 meanNbrNP = aggregate(list(MeanNbrNP=subscriptions$NbrNewspapers), subscriptions["CustomerID"], mean)
@@ -181,6 +198,14 @@ subscriptionsBT = Reduce(function(x, y) merge(x, y, by="CustomerID"), list(subsc
 meanTotCredit = aggregate(list(MeanTotCredit=subscriptions$TotalCredit), subscriptions["CustomerID"], mean)
 meanTotCredit[,"MeanTotCredit"] = round(meanTotCredit[,"MeanTotCredit"], 2)
 subscriptionsBT = merge(subscriptionsBT, meanTotCredit, by="CustomerID")
+
+#time since last renewal
+# Keep renewals starting within the independent period
+subscriptions2 = subset(subscriptions,RenewalDate <= endIP,select=c('CustomerID',"RenewalDate"))
+subscriptions2 = aggregate(list(RenewalDate=subscriptions2$RenewalDate), subscriptions2["CustomerID"], max)
+subscriptions2$TimeSinceLastRen = endIP - subscriptions2$RenewalDate
+subscriptions2$RenewalDate <- NULL
+subscriptionsBT = merge(subscriptionsBT, subscriptions2, by="CustomerID")
 
 ########
 # Base table generation: credit
@@ -263,18 +288,34 @@ delivery = merge(delivery, activeSubscriptions, by="SubscriptionID")
 # Keep deliveries starting within the independent period
 delivery = subset(delivery, StartDate <= endIP)
 
+#delivery2 = subset(delivery, EndDate <= endIP)
+#endIP ="01/02/2010" 
+#the max end date in delivery table after step above is "31/12/2010"
+#we could subset it correctly.....i tried with EndDate <= endIP but it gives same results
+
 # Missing values
 
 # Delete the empty levels in the factor variables 
 for(n in names(delivery)){
-  if(is.factor(delivery[,n])) delivery[,n] <- factor(delivery[,n])
+  if(is.factor(delivery[,n])) delivery[,n] <- factor(delivery[,n]) #why?
 }
 
 # Per subscriptions: Missing values
 predictors = c("DeliveryType", "DeliveryClass", "DeliveryContext")
 predTable = subset(delivery, select=(predictors))
 mvVars = sapply(predictors, function(x) paste("MV",x,sep=""))
+
 mvTable = aggregate(predTable, delivery["SubscriptionID"], function(x) round(sum(is.na(x))/length(x),2))
+
+# func_SK <- function(x) 
+#    {
+#       aggregate(x,delivery["SubscriptionID"], function(x) round(sum(is.na(x))/length(x),2))
+#    }
+# c = Sys.time()
+# mvTable2 = summaryBy(predTable~)
+# Sys.time() - c
+#takes  ~10 secs
+
 deliveryBT = setNames(mvTable, c("SubscriptionID", mvVars))
 
 # Impute the mean and mode
@@ -286,6 +327,7 @@ for(p in predictors){
 }
 
 # Per subscriptions: Number of deliveries
+
 deliveryNb = aggregate(list(DeliveryNb=delivery$DeliveryType), delivery["SubscriptionID"], length)
 
 # Per subscriptions: Number of delivery type, class and context
