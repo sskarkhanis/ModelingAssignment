@@ -469,7 +469,7 @@ testTable$CustomerID <- NULL
 #####
 # Binary decision tree
 #####
-BDT <- rpart(Churn ~ ., control=rpart.control(cp = 0.001), trainTable)
+BDT <- rpart(Churn ~ ., control=rpart.control(cp = 0.001), trainTable) #what is cp used for?
 
 # Prediction
 table(predictionTree <- predict(BDT, testTable)[,2])
