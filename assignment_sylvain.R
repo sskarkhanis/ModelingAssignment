@@ -144,7 +144,7 @@ for(p in predictors){
   if(sum(subscriptionsBT[paste("MV",p,sep="")])==0) subscriptionsBT[paste("MV",p,sep="")] <- NULL
 }
 
-# Number of subscriptions per customers
+# Number of subscriptions per customers test
 #why is "list" needed in subscriptionsNb to assign the column name? - for my own understanding
 subscriptionsNb = aggregate(list(SubscriptionsNb=subscriptions$StartDate), subscriptions["CustomerID"], length)
 subscriptionsBT = merge(subscriptionsBT, subscriptionsNb, by="CustomerID")
