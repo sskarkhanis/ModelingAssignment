@@ -18,12 +18,7 @@ credit <- read.table("credit.txt", header=TRUE, sep=";", colClasses=c("character
 # Customers import
 customers <- read.table("customers.txt", header=TRUE, sep=";", colClasses=c("character", "factor", "character", "character", "character", "character"), na.string=c("",".","NA"))
 # Delivery import
-<<<<<<< HEAD
-delivery <- read.table("delivery.txt", header=TRUE, sep=";", colClasses=c("character", "factor", "factor", "character", "character", "character"),na.strings="")
-#delivery <- delivery[1:(nrow(delivery)*0.2),]
-=======
 delivery <- read.table("delivery.txt", header=TRUE, sep=";", colClasses=c("character", "factor", "factor", "factor", "character", "character"), na.string=c("",".","NA"))
->>>>>>> FETCH_HEAD
 # Formula import
 formula <- read.table("formula.txt", header=TRUE, sep=";", colClasses=c("character", "character", "factor", "factor"), na.string=c("",".","NA"))
 # Subscriptions import
@@ -69,28 +64,8 @@ customers = merge(customers, churners[c("CustomerID", "Churn")], by="CustomerID"
 
 customers$DOB <- as.numeric(as.Date(customers$DOB,dateFormat))
 
-<<<<<<< HEAD
-#table containing active customers
-customers = merge(customers, activeCustomers, by="CustomerID") 
-
-#creating Dependent variable "Churn"
-customers["Churn"] = as.factor(ifelse(customers$EndDate <= endDP, 1, 0))
-#table(customers$Churn)
-#   0    1 
-#1958  164 
-#---->professors definition of churn
-subs$Churn <- ifelse((subs$StartDate >= start_dep & subs$StartDate <= end_dep),1,0 )
-
-#converting DOB to date format
-customers$DOB <- as.Date(customers$DOB,dateFormat)
-
-predictors = c("Gender", "DOB", "District")
-#creating dummy variables with prefix "MV" indicating if a var has missing values or not
-customersBT = subset(customers, select=c("CustomerID", "Churn", unlist(predictors)))
-=======
 predictors = c("Gender", "DOB", "District")
 customersBT = subset(customers, select=c("CustomerID", "Churn", predictors))
->>>>>>> FETCH_HEAD
 for (j in predictors){
   customersBT[paste("MV", j, sep="")] <- is.na(customers[,j]) + 0
 }
