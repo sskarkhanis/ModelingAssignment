@@ -18,7 +18,7 @@ credit <- read.table("credit.txt", header=TRUE, sep=";", colClasses=c("character
 # Customers import
 customers <- read.table("customers.txt", header=TRUE, sep=";", colClasses=c("character", "factor", "character", "character", "character", "character"))
 # Delivery import
-delivery <- read.table("delivery.txt", header=TRUE, sep=";", colClasses=c("character", "factor", "factor", "factor", "character", "character"))
+delivery <- read.table("delivery.txt", header=TRUE, sep=";", colClasses=c("character", "factor", "factor", "character", "character", "character"),na.strings="")
 #delivery <- delivery[1:(nrow(delivery)*0.2),]
 # Formula import
 formula <- read.table("formula.txt", header=TRUE, sep=";", colClasses=c("character", "character", "factor", "factor"))
@@ -78,7 +78,7 @@ subs$Churn <- ifelse((subs$StartDate >= start_dep & subs$StartDate <= end_dep),1
 #converting DOB to date format
 customers$DOB <- as.Date(customers$DOB,dateFormat)
 
-predictors = list("Gender", "DOB", "District")
+predictors = c("Gender", "DOB", "District")
 #creating dummy variables with prefix "MV" indicating if a var has missing values or not
 customersBT = subset(customers, select=c("CustomerID", "Churn", unlist(predictors)))
 for (j in predictors){
