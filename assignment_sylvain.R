@@ -1,15 +1,14 @@
-#install.packages("FNN")
-packages = c("aCRM", "dummies", "randomForest", "rpart", "ROCR", "ada", "randomForest", "pROC", "AUC", "FNN")
+#install.packages("kernelFactory")
+packages = c("aCRM", "dummies", "randomForest", "rpart", "ROCR", "ada", "randomForest", "pROC", "AUC", "FNN", "glmnet", "e1071", "nnet", "kernelFactory")
 for (p in packages){
   require(p, character.only=TRUE)
 }
+source("tuneMember.R")
 
 # Functions
 mvProp <- function(x){
   round(sum(is.na(x))/length(x),2)
 }
-
-# load('baseTable.Rdata')
 
 # Complaints import
 complaints <- read.table("complaints.txt", header=TRUE, sep=";", colClasses=c("character", "character", "character", "character", "factor", "factor", "factor"), na.string=c("",".","NA"))
@@ -66,9 +65,13 @@ customers$DOB <- as.numeric(as.Date(customers$DOB,dateFormat))
 
 predictors = c("Gender", "DOB", "District")
 customersBT = subset(customers, select=c("CustomerID", "Churn", predictors))
+
+# Remove missing values indicators when there are no missing values and convert logical columns to numeric
 for (j in predictors){
-  customersBT[paste("MV", j, sep="")] <- is.na(customers[,j]) + 0
+  if(sum(subscriptionsBT[paste("MV", p, sep="")])==0) subscriptionsBT[paste("MV",p,sep="")] <- NULL
+  else customersBT[paste("MV", j, sep="")] <- is.na(customers[,j]) + 0
 }
+
 customersBT[c("Gender", "DOB", "District")] = imputeMissings(customersBT[c("Gender", "DOB", "District")])
 customersBT = dummy.data.frame(customersBT, c("Gender", "District"), sep='_')
 
@@ -115,7 +118,7 @@ subscriptions$PaymentDate[is.na(subscriptions$PaymentDate)] <- subscriptions$End
 
 # Remove missing values indicators when there are no missing values
 for(p in predictors){
-  if(sum(subscriptionsBT[paste("MV",p,sep="")])==0) subscriptionsBT[paste("MV",p,sep="")] <- NULL
+  if(sum(subscriptionsBT[paste("MV", p, sep="")])==0) subscriptionsBT[paste("MV",p,sep="")] <- NULL
 }
 
 # Number of subscriptions per customers
@@ -396,99 +399,32 @@ baseTable = Reduce(function(x, y) merge(x, y, by='CustomerID', all=TRUE), subBas
 baseTable[is.na(baseTable)]  <- 0
 print(Sys.time()-StartTime)
 save(baseTable,file='baseTable.Rdata')
+# load('baseTable.Rdata')
 
 ########
 # Modeling
 ########
 
-trainind <- sample(1:nrow(baseTable),round(0.5*nrow(baseTable)))
-
-#fold1 <- sample(1:nrow(baseTable),round(0.3*nrow(baseTable)))
-#remaining_rows = as.numeric(row.names(baseTable[-trainind,]))
-#fold2 <- sample(remaining_rows,round(0.3*nrow(baseTable)))
-#fold3 = row.names(baseTable[c(-trainind, -trainind2),])
-
-trainTable <- baseTable[trainind,]
-testTable <- baseTable[-trainind,]
-trainTable$CustomerID <- NULL
-testTable$CustomerID <- NULL
-
-score = data.frame(matrix(ncol=0, nrow=1))
-
-#####
-# Binary decision tree
-#####
-
-BDT <- rpart(Churn ~ ., control=rpart.control(cp = 0.001), trainTable)
-
-# Prediction
-table(predictionTree <- predict(BDT, testTable)[,2])
-
-# Evaluation
-score["BinaryDecisionTree"] <- auc(roc(predictionTree,testTable$Churn))
-#plot(performance(prediction(predictionTree, testTable$Churn), "tpr", "fpr"))
-
-#####
-# Bagged decision tree
-#####
-
-treeBag <- list()
-# Bagged decision trees
-for (i in 1:10) {
-  # Bootstrap indicators
-  trainTableInd <- sample(1:nrow(trainTable),nrow(trainTable),replace=TRUE)
-  treeBag[[i]] <- rpart(Churn ~ ., trainTable[trainTableInd,])
-}
-
-# Prediction
-predTreebag <- data.frame(matrix(NA,nrow=nrow(testTable),ncol=10))
-for (i in 1:10) {
-  predTreebag[,i] <- predict(treeBag[[i]],testTable)[,2] 
-}
-predTreebagged <- rowMeans(predTreebag)
-
-# Evaluation
-score["BaggedTrees"] = auc(roc(predTreebagged,testTable$Churn))
-#plot(performance(prediction(predTreebagged, testTable$Churn), "tpr", "fpr"))
-
-#####
-# Boosting
-#####
-
-ABmodel <- ada(Churn ~ . , trainTable, iter=50)
-
-# Prediction
-predAB <- as.numeric(predict(ABmodel, testTable, type="probs")[,2])
-
-# Evaluation
-score["Boosting"] = auc(roc(predAB,testTable$Churn))
-#plot(performance(prediction(predAB ,testTable$Churn), "tpr", "fpr"))
-
-#####
-# Random forest
-#####
-
-rFmodel <- randomForest(x=trainTable[, names(trainTable)!= "Churn"],y=trainTable$Churn, ntree=1000, importance=TRUE)
-
-# Prediction
-predrF <- predict(rFmodel, testTable[, names(testTable)!= "Churn"],type="prob")[,2]
-
-# Evaluation
-score["RandomForest"] = auc(roc(predrF,testTable$Churn))
-#plot(performance(prediction(predrF ,testTable$Churn), "tpr", "fpr"))
-
-#####
-# K-Nearest Neighbors
-#####
-
+AllModels = function(baseTable){
 allind <- sample(1:nrow(baseTable), nrow(baseTable))
 trainind <- allind[1:round(length(allind)/3)]
 valind <- allind[(round(length(allind)/3)+1):round(length(allind)*(2/3))]
 testind <- allind[round(length(allind)*(2/3)+1):length(allind)]
 
-trainTable <- baseTable[trainind,]
-valTable <- baseTable[valind,]
-testTable <- baseTable[testind,]
+trainTable <- baseTable[trainind, names(baseTable) != "CustomerID"]
+valTable <- baseTable[valind, names(baseTable) != "CustomerID"]
+testTable <- baseTable[testind, names(baseTable) != "CustomerID"]
+
+# Delete constant columns
+for(n in names(trainTable)){
+  trainNb = dim(table(trainTable[n]))
+  valNb = dim(table(trainTable[n]))
+  if (trainNb==1 | valNb==1){
+    trainTable[n] = NULL
+    valTable[n] = NULL
+    testTable[n] = NULL
+  }
+}
 
 churnTrain <- trainTable$Churn
 trainTable$Churn <- NULL
@@ -497,36 +433,222 @@ valTable$Churn <- NULL
 churnTest <- testTable$Churn
 testTable$Churn <- NULL
 
-trainKNN <- data.frame(sapply(trainTable, function(x) as.numeric(as.character(x))))
-valKNN <- data.frame(sapply(valTable, function(x) as.numeric(as.character(x))))
-testKNN <- data.frame(sapply(testTable, function(x) as.numeric(as.character(x))))
+bigTrainTable <- rbind(trainTable, valTable)
+churnBigTrain <- factor(c(as.integer(as.character(churnTrain)),as.integer(as.character(churnVal))))
+
+trainTable <- data.frame(sapply(trainTable, function(x) as.numeric(as.character(x))))
+bigTrainTable = data.frame(sapply(bigTrainTable, function(x) as.numeric(as.character(x))))
+valTable <- data.frame(sapply(valTable, function(x) as.numeric(as.character(x))))
+testTable <- data.frame(sapply(testTable, function(x) as.numeric(as.character(x))))
+
+scores = data.frame(matrix(ncol=0, nrow=1))
+
+#####
+# Binary decision tree
+#####
+
+BDT <- rpart(churnBigTrain ~ ., control=rpart.control(cp = 0.001), bigTrainTable)
+
+# Prediction
+table(predictionTree <- predict(BDT, testTable)[,2])
+
+# Evaluation
+scores["BinaryDecisionTree"] <- AUC::auc(roc(predictionTree, churnTest))
+
+#####
+# Bagged decision tree
+#####
+
+bigTrainTable["Churn"] = churnBigTrain
+treeBag <- list()
+for (i in 1:10) {
+  trainTableInd <- sample(1:nrow(bigTrainTable), nrow(bigTrainTable), replace=TRUE)
+  treeBag[[i]] <- rpart(Churn ~ ., bigTrainTable[trainTableInd,])
+}
+bigTrainTable["Churn"] = NULL
+
+# Prediction
+predTreebag <- data.frame(matrix(NA, nrow=nrow(testTable), ncol=10))
+for (i in 1:10) {
+  predTreebag[,i] <- predict(treeBag[[i]], testTable)[,2] 
+}
+predTreebagged <- rowMeans(predTreebag)
+
+# Evaluation
+scores["BaggedTrees"] = AUC::auc(roc(predTreebagged, churnTest))
+
+#####
+# Boosting
+#####
+
+ABmodel <- ada(churnBigTrain ~ . , bigTrainTable, iter=50)
+
+# Prediction
+predAB <- as.numeric(predict(ABmodel, testTable, type="probs")[,2])
+
+# Evaluation
+scores["Boosting"] = AUC::auc(roc(predAB, churnTest))
+
+#####
+# Random forest
+#####
+
+rFmodel <- randomForest(x=bigTrainTable, y=churnBigTrain, ntree=1000, importance=TRUE)
+
+# Prediction
+predrF <- predict(rFmodel, testTable, type="prob")[,2]
+
+# Evaluation
+scores["RandomForest"] = AUC::auc(roc(predrF, churnTest))
+
+#####
+# K-Nearest Neighbors
+#####
 
 # Tuning k
 #auc <- numeric()
-#for (k in 1:nrow(trainKNN)) { 
-#  indicatorsKNN <- as.integer(knnx.index(data=trainKNN, query=valKNN, k=k))
+#for (k in 1:nrow(trainTable)) { 
+#  indicatorsKNN <- as.integer(knnx.index(data=trainTable, query=valTable, k=k))
 #  predKNN <- as.integer(as.character(churnTrain[indicatorsKNN]))
-#  predKNN <- rowMeans(data.frame(matrix(data=predKNN, ncol=k, nrow=nrow(valKNN)))) 
+#  predKNN <- rowMeans(data.frame(matrix(data=predKNN, ncol=k, nrow=nrow(valTable)))) 
 #  auc[k] <- AUC::auc(roc(predKNN, churnVal))
 #}
 #print(which.max(auc))
 
 # Prediction
 k=30
-indicatorsKNN <- as.integer(knnx.index(data=trainKNN, query=testKNN, k=k))
-predKNN <- as.integer(as.character(churnTrain[indicatorsKNN]))
-predKNN <- rowMeans(data.frame(matrix(data=predKNN, ncol=k, nrow=nrow(testKNN))))
+indicatorsKNN <- as.integer(knnx.index(data=bigTrainTable, query=testTable, k=k))
+predKNN <- as.integer(as.character(churnBigTrain[indicatorsKNN]))
+predKNN <- rowMeans(data.frame(matrix(data=predKNN, ncol=k, nrow=nrow(testTable))))
 
 # Estimation
-score["KNN"] = auc(roc(predKNN, churnTest))
+scores["KNN"] = AUC::auc(roc(predKNN, churnTest))
+
+#####
+# GLM - Stepwise logistic regression
+#####
+
+LR = glm(churnBigTrain ~ ., data=bigTrainTable, family=binomial("logit"), control=glm.control(maxit=200))
+# Take long time
+#LR <- step(LR, direction="both", trace = FALSE)
+
+# Prediction
+predLRstep = predict(LR, newdata=testTable, type="response")
+
+# Evaluation
+scores["GLM-Step"] = AUC::auc(roc(predLRstep, churnTest))
+
+#####
+# GLM - Regularized logistic regression
+#####
+
+LR = glmnet(x=data.matrix(trainTable), y=churnTrain, family="binomial")
+
+# Cross-validate lambda
+aucstore <- numeric()
+for (i in 1:length(LR$lambda) ) {
+  predglmnet <- predict(LR,newx=data.matrix(valTable),type="response",s=LR$lambda[i])
+  aucstore[i] <- AUC::auc(roc(as.numeric(predglmnet),churnVal))
+}   
+LR.lambda <- LR$lambda[which.max(aucstore)]
+
+# Create final model
+LR <- glmnet(x=data.matrix(bigTrainTable), y=churnBigTrain, family="binomial")
+predLRlas <- as.numeric(predict(LR, newx=data.matrix(testTable), type="response",s =LR.lambda))
+
+# Evaluation
+scores["GLM-RLR"] = AUC::auc(roc(predLRlas, churnTest))
+
+#####
+# Support vector machines
+#####
+
+# Tuning
+#bigTrainTable["Churn"] = churnBigTrain
+#params <- tune.svm(Churn ~ ., data=bigTrainTable, gamma=10^(-6:-1), cost=10^(1:4))
+#bigTrainTable["Churn"] = NULL
+
+modelSVM = svm(churnBigTrain ~ ., data=bigTrainTable, cost=1000, gamma=0.001, degree=1)
+
+# Prediction
+predSVM = predict(modelSVM, testTable)
+
+# Evaluation
+scores["SVM"] = AUC::auc(roc(predSVM, churnTest))
+
+#####
+# Neural networks
+#####
+
+minima <- sapply(trainTable, min)
+scaling <- sapply(trainTable, max)-minima
+trainTableScaled <- data.frame(base::scale(trainTable, center=minima, scale=scaling))
+bigTrainTableScaled <- data.frame(base::scale(bigTrainTable, center=minima, scale=scaling))
+valTableScaled <- data.frame(base::scale(valTable,center=minima,scale=scaling))
+testTableScaled <- data.frame(base::scale(testTable, center=minima, scale=scaling))
+
+NN.rang <- 0.5 #the range of the initial random weights parameter
+NN.maxit <- 10000 #set high in order not to run into early stopping
+NN.size <- c(5,10,20) #number of units in the hidden layer
+NN.decay <- c(0,0.001,0.01,0.1) #weight decay. Same as lambda in regularized LR. Controls overfitting
+
+call <- call("nnet", formula = churnTrain ~ ., data=trainTableScaled, rang=NN.rang, maxit=NN.maxit, trace=FALSE, MaxNWts= Inf)
+tuning <- list(size=NN.size, decay=NN.decay)
+
+# Tuning           
+#result <- tuneMember(call=call, tuning=tuning, xtest=valTableScaled, ytest=churnVal, predicttype="raw")
+
+# Modeling
+NN <- nnet(churnBigTrain ~ ., bigTrainTableScaled, size = 10, rang = NN.rang, decay = 0.1, maxit = NN.maxit, trace=FALSE, MaxNWts= Inf)
+
+# Prediction
+predNN <- as.numeric(predict(NN, testTableScaled, type="raw"))
+
+# Evaluation
+scores["NN"] = AUC::auc(roc(predNN, churnTest))
+
+#####
+# Kernel factory
+#####
+
+KF <- kernelFactory(bigTrainTable, as.factor(churnBigTrain))
+
+# Prediction
+predKF <- predict(KF, newdata=testTable)
+
+# Evaluation
+scores["KF"] = AUC::auc(roc(predKF, churnTest))
+
+scores
+}
+
+n = 50
+for (i in 1:n){
+  auc = AllModels(baseTable)
+  if (i==1){
+    scores = rbind((auc/n), auc, auc)
+  } 
+  else{
+    scores[1,] = scores[1,] + (auc / n)
+    scores[2,] = pmin(scores[2,], auc)
+    scores[3,] = pmax(scores[3,], auc)
+  } 
+  print(paste("Iteration",i))
+  print(scores)
+}
 
 #####
 # All roc curves
 #####
 
-plot(roc(predictionTree,testTable$Churn))
-plot(roc(predTreebagged,testTable$Churn),add=TRUE,col="blue")
-plot(roc(predAB,testTable$Churn),add=TRUE,col="red")
-plot(roc(predrF,testTable$Churn),add=TRUE,col="green")
-plot(roc(predKNN, churnTest),add=TRUE,col="yellow")
-legend("bottomright",legend=c("Binary Decision Tree","Bagged Trees", "Ada Boost", "Random Forest", "KNN"),col=c("black","blue","red","green"),lwd=1)
+plot(roc(predictionTree, churnTest))
+plot(roc(predTreebagged, churnTest), add=TRUE, col="blue")
+plot(roc(predAB, churnTest), add=TRUE, col="red")
+plot(roc(predrF, churnTest), add=TRUE, col="green")
+plot(roc(predKNN, churnTest), add=TRUE, col="yellow")
+plot(roc(predLRstep, churnTest), add=TRUE, col="pink")
+plot(roc(predLRlas, churnTest), add=TRUE, col="purple")
+plot(roc(predSVM, churnTest), add=TRUE, col="cyan")
+plot(roc(predNN, churnTest), add=TRUE, col="grey")
+plot(roc(predKF, churnTest), add=TRUE, col="orange")
+legend("bottomright", legend=c("Binary Decision Tree","Bagged Trees", "Ada Boost", "Random Forest", "KNN", "GLM-Step", "GLM-RLR", "SVM", "NN", "KF"), col=c("black","blue","red","green","pink","purple","cyan","grey","orange"), lwd=1)
