@@ -1,3 +1,4 @@
+
 #install.packages("kernelFactory")
 packages = c("aCRM", "dummies", "randomForest", "rpart", "ROCR", "ada", "randomForest", "pROC", "AUC", "FNN", "glmnet", "e1071", "nnet", "kernelFactory")
 for (p in packages){
@@ -61,9 +62,11 @@ churners = aggregate(list(NonChurn=activeSubs$NonChurn), activeSubs["CustomerID"
 churners$Churn <- as.factor(ifelse(churners$NonChurn==0,1,0))
 customers = merge(customers, churners[c("CustomerID", "Churn")], by="CustomerID")
 
-customers$DOB <- as.numeric(as.Date(customers$DOB,dateFormat))
+customers$Age <- endIP - as.Date(customers$DOB,dateFormat)
+customers$DOB <- NULL
 
-predictors = c("Gender", "DOB", "District")
+
+predictors = c("Gender", "District","Age")
 customersMV = sapply(customers[predictors], function(x) (!complete.cases(x))+0)
 mvVars = sapply(predictors, function(x) paste("MV",x,sep=""))
 colnames(customersMV) = mvVars
@@ -76,7 +79,7 @@ for (p in predictors){
   if(sum(customersBT[paste("MV", p, sep="")])==0) customersBT[paste("MV",p,sep="")] <- NULL
 }
 
-customersBT[c("Gender", "DOB", "District")] = imputeMissings(customersBT[c("Gender", "DOB", "District")])
+customersBT[c("Gender", "District","Age")] = imputeMissings(customersBT[c("Gender", "District","Age")])
 customersBT = dummy.data.frame(customersBT, c("Gender", "District"), sep='_')
 
 ########
@@ -186,7 +189,10 @@ meanTotCredit = aggregate(list(MeanTotCredit=subscriptions$TotalCredit), subscri
 meanTotCredit[,"MeanTotCredit"] = round(meanTotCredit[,"MeanTotCredit"], 2)
 subscriptionsBT = merge(subscriptionsBT, meanTotCredit, by="CustomerID")
 
-########
+# Total Number of Renewals per Customer
+totNrRen = aggregate(list(totNrRen=subscriptions$RenewalDate), subscriptions["CustomerID"], length)
+subscriptionsBT = merge(subscriptionsBT, totNrRen, by="CustomerID")
+
 # Base table generation: credit
 ########
 
