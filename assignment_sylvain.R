@@ -64,12 +64,16 @@ customers = merge(customers, churners[c("CustomerID", "Churn")], by="CustomerID"
 customers$DOB <- as.numeric(as.Date(customers$DOB,dateFormat))
 
 predictors = c("Gender", "DOB", "District")
-customersBT = subset(customers, select=c("CustomerID", "Churn", predictors))
+customersMV = sapply(customers[predictors], function(x) (!complete.cases(x))+0)
+mvVars = sapply(predictors, function(x) paste("MV",x,sep=""))
+colnames(customersMV) = mvVars
 
-# Remove missing values indicators when there are no missing values and convert logical columns to numeric
-for (j in predictors){
-  if(sum(subscriptionsBT[paste("MV", p, sep="")])==0) subscriptionsBT[paste("MV",p,sep="")] <- NULL
-  else customersBT[paste("MV", j, sep="")] <- is.na(customers[,j]) + 0
+customersBT = subset(customers, select=c("CustomerID", "Churn", predictors))
+customersBT = cbind(customersBT, customersMV)
+
+# Remove missing values indicators when there are no missing values
+for (p in predictors){
+  if(sum(customersBT[paste("MV", p, sep="")])==0) customersBT[paste("MV",p,sep="")] <- NULL
 }
 
 customersBT[c("Gender", "DOB", "District")] = imputeMissings(customersBT[c("Gender", "DOB", "District")])
@@ -398,7 +402,7 @@ subBaseTable = list(customersBT, subscriptionsBT, creditBT, deliveryBT, complain
 baseTable = Reduce(function(x, y) merge(x, y, by='CustomerID', all=TRUE), subBaseTable)
 baseTable[is.na(baseTable)]  <- 0
 print(Sys.time()-StartTime)
-save(baseTable,file='baseTable.Rdata')
+save(baseTable, file='baseTable.Rdata')
 # load('baseTable.Rdata')
 
 ########
@@ -488,6 +492,11 @@ predAB <- as.numeric(predict(ABmodel, testTable, type="probs")[,2])
 
 # Evaluation
 scores["Boosting"] = AUC::auc(roc(predAB, churnTest))
+
+varplot(ABmodel)
+#getting them in a character string
+varplot(ABmodel,type="scores")
+summary(ABmodel)
 
 #####
 # Random forest
@@ -622,6 +631,8 @@ scores["KF"] = AUC::auc(roc(predKF, churnTest))
 scores
 }
 
+#bt = baseTable[round(1:(nrow(baseTable)*0.1)),]
+
 n = 50
 for (i in 1:n){
   auc = AllModels(baseTable)
@@ -636,6 +647,9 @@ for (i in 1:n){
   print(paste("Iteration",i))
   print(scores)
 }
+finalScores = t(scores)
+colnames(finalScores) = c("Mean", "Min", "Max")
+save(scores, file='scores5/3.Rdata')
 
 #####
 # All roc curves
