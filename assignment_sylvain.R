@@ -75,9 +75,12 @@ customersBT = subset(customers, select=c("CustomerID", "Churn", predictors))
 customersBT = cbind(customersBT, customersMV)
 
 # Remove missing values indicators when there are no missing values
-for (p in predictors){
-  if(sum(customersBT[paste("MV", p, sep="")])==0) customersBT[paste("MV",p,sep="")] <- NULL
-}
+rmMissValInd = function(predVar,bron)
+   {
+      for (p in predictors) if(sum(bron[paste("MV", p, sep="")])==0) bron[paste("MV",p,sep="")] <- NULL
+      bron
+   }
+customersBT = rmMissValInd(predictors,customersBT)
 
 customersBT[c("Gender", "District","Age")] = imputeMissings(customersBT[c("Gender", "District","Age")])
 customersBT = dummy.data.frame(customersBT, c("Gender", "District"), sep='_')
@@ -104,10 +107,26 @@ missToZero = c("NbrNewspapers", "NbrStart", "NetFormulaPrice", "TotalCredit")
 missOther = c("RenewalDate", "PaymentDate")
 
 predictors = c(missToMean, missToZero, missOther)
-predTable = subset(subscriptions, select=(predictors))
-mvVars = sapply(predictors, function(x) paste("MV",x,sep=""))
-mvTable = aggregate(predTable, subscriptions["CustomerID"], mvProp)
-subscriptionsBT = setNames(mvTable, c("CustomerID", mvVars))
+# predTable = subset(subscriptions, select=(predictors))
+# mvVars = sapply(predictors, function(x) paste("MV",x,sep=""))
+# mvTable = aggregate(predTable, subscriptions["CustomerID"], mvProp)
+# subscriptionsBT = setNames(mvTable, c("CustomerID", mvVars))
+
+#automating the process to create missingVar
+#predvar = independent variables for whom missing var need to be created
+#bron    = source table
+#byVar   = grouping variable
+missingVarAuto = function (predVar,bron,byVar)
+   {
+      predTable = subset(bron,select=c(predVar))
+      mvVars    = sapply(predVar, function(x) paste0("MV",x))
+      mvTable   = aggregate(predTable,bron[byVar],mvProp)
+      suffix    = "BT"
+      rhs       = "=setNames(mvTable,c(byVar,mvVars))"
+      eval(parse(text=paste0(deparse(quote(bron)),suffix,rhs)))
+   }
+#function call
+missingVarAuto (predictors,subscriptions,"CustomerID")
 
 # Impute the 0
 sub = subset(subscriptions, select=missToZero)
@@ -213,10 +232,13 @@ missToZero = c("Amount")
 
 # Per subscriptions: Missing values
 predictors = c(missToMean, missToZero)
-predTable = subset(credit, select=(predictors))
-mvVars = sapply(predictors, function(x) paste("MV",x,sep=""))
-mvTable = aggregate(predTable, credit["SubscriptionID"], mvProp)
-creditBT = setNames(mvTable, c("SubscriptionID", mvVars))
+# predTable = subset(credit, select=(predictors))
+# mvVars = sapply(predictors, function(x) paste("MV",x,sep=""))
+# mvTable = aggregate(predTable, credit["SubscriptionID"], mvProp)
+# creditBT = setNames(mvTable, c("SubscriptionID", mvVars))
+
+#function call
+missingVarAuto (predictors,credit,"SubscriptionID")
 
 #credit <- imputeMissings(credit)
 
@@ -278,10 +300,13 @@ delivery = subset(delivery, StartDate <= endIP)
 
 # Per subscriptions: Missing values
 predictors = c("DeliveryType", "DeliveryClass", "DeliveryContext")
-predTable = subset(delivery, select=(predictors))
-mvVars = sapply(predictors, function(x) paste("MV",x,sep=""))
-mvTable = aggregate(predTable, delivery["SubscriptionID"], mvProp)
-deliveryBT = setNames(mvTable, c("SubscriptionID", mvVars))
+# predTable = subset(delivery, select=(predictors))
+# mvVars = sapply(predictors, function(x) paste("MV",x,sep=""))
+# mvTable = aggregate(predTable, delivery["SubscriptionID"], mvProp)
+# deliveryBT = setNames(mvTable, c("SubscriptionID", mvVars))
+
+#function call
+missingVarAuto (predictors,delivery,"SubscriptionID")
 
 # Impute the mean and mode
 delivery[, names(delivery) %in% predictors] <- imputeMissings(delivery[, names(delivery) %in% predictors])
@@ -321,10 +346,13 @@ complaints = subset(complaints, ComplaintDate <= endIP)
 
 # Per subscriptions: Missing values
 missToMean = c("ComplaintType", "SolutionType")
-predTable = subset(complaints, select=(missToMean))
-mvVars = sapply(missToMean, function(x) paste("MV",x,sep=""))
-mvTable = aggregate(predTable, complaints["CustomerID"], mvProp)
-complaintsBT = setNames(mvTable, c("CustomerID", mvVars))
+# predTable = subset(complaints, select=(missToMean))
+# mvVars = sapply(missToMean, function(x) paste("MV",x,sep=""))
+# mvTable = aggregate(predTable, complaints["CustomerID"], mvProp)
+# complaintsBT = setNames(mvTable, c("CustomerID", mvVars))
+
+#function call
+missingVarAuto (predictors,complaints,"CustomerID")
 
 # Impute the mean and mode
 complaints[, names(complaints) == "MVComplaintType"] <- imputeMissings(complaints[, names(complaints) == "MVComplaintType"])
@@ -376,10 +404,13 @@ merged_subs_formula <- merge(tmp_subs_formula, formula, by = "FormulaID")
 
 # Missing values
 predictors = c("FormulaType", "Duration")
-predTable = subset(merged_subs_formula, select=(predictors))
-mvVars = sapply(predictors, function(x) paste("MV",x,sep=""))
-mvTable = aggregate(predTable, merged_subs_formula["CustomerID"], mvProp)
-formulaBT = setNames(mvTable, c("CustomerID", mvVars))
+# predTable = subset(merged_subs_formula, select=(predictors))
+# mvVars = sapply(predictors, function(x) paste("MV",x,sep=""))
+# mvTable = aggregate(predTable, merged_subs_formula["CustomerID"], mvProp)
+# formulaBT = setNames(mvTable, c("CustomerID", mvVars))
+
+#function call
+missingVarAuto (predictors,formula,"CustomerID")
 
 # Impute the mean and mode
 merged_subs_formula[, names(merged_subs_formula) %in% predictors] <- imputeMissings(merged_subs_formula[, names(merged_subs_formula) %in% predictors])
