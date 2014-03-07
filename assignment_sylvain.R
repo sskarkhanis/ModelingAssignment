@@ -1,15 +1,45 @@
-
-#install.packages("kernelFactory")
-packages = c("aCRM", "dummies", "randomForest", "rpart", "ROCR", "ada", "randomForest", "pROC", "AUC", "FNN", "glmnet", "e1071", "nnet", "kernelFactory")
+#install.packages("rattle")
+packages = c("aCRM", "dummies", "randomForest", "rpart", "ROCR", "ada", "randomForest", "pROC", "AUC", "FNN", "glmnet", "e1071", "nnet", "kernelFactory", "rattle")
 for (p in packages){
   require(p, character.only=TRUE)
 }
 source("tuneMember.R")
 
-# Functions
+# Compute the proportions of missing values
 mvProp <- function(x){
-  round(sum(is.na(x))/length(x),2)
+  round(sum(is.na(x))/length(x), 2)
 }
+
+aggr <- function(sourceTable, destTable, col, newName, byCol, func){
+  funcExpr = parse(text=func)
+  aggrTable = unique(sourceTable[byCol])
+  if(func=="table"){
+    values = unique(sourceTable[, col])
+    sourceTable = dummy.data.frame(sourceTable, col, sep='_')
+    for (v in values){
+      colName = paste(col, v, sep="_")
+      resTable = tapply(sourceTable[, colName], sourceTable[, byCol], sum)
+      aggrTable[colName] = resTable
+      aggrTable[byCol] = row.names(resTable)
+    }
+    row.names(aggrTable) = NULL
+  }
+  else {
+    resTable = tapply(sourceTable[, col], sourceTable[, byCol], eval(funcExpr))
+    aggrTable[newName] = resTable
+    aggrTable[byCol] = row.names(resTable)
+    if(is.double(aggrTable[, newName])) aggrTable[, newName] = round(aggrTable[, newName], 2)
+  }
+  merge(destTable, aggrTable, all.x=TRUE)
+}
+
+# values = unique(delivery$DeliveryType)
+# bb = dummy.data.frame(delivery, "DeliveryType", sep='_')
+# del = unique(delivery["SubscriptionID"])
+# for(v in values){
+#   del[paste(v)] = tapply(bb[,paste("DeliveryType",v,sep="_")], bb$SubscriptionID, funcExpr)
+# }
+# row.names(del) = NULL
 
 # Complaints import
 complaints <- read.table("complaints.txt", header=TRUE, sep=";", colClasses=c("character", "character", "character", "character", "factor", "factor", "factor"), na.string=c("",".","NA"))
@@ -62,11 +92,9 @@ churners = aggregate(list(NonChurn=activeSubs$NonChurn), activeSubs["CustomerID"
 churners$Churn <- as.factor(ifelse(churners$NonChurn==0,1,0))
 customers = merge(customers, churners[c("CustomerID", "Churn")], by="CustomerID")
 
-customers$Age <- endIP - as.Date(customers$DOB,dateFormat)
-customers$DOB <- NULL
+customers$Age = endIP - as.Date(customers$DOB, dateFormat)
 
-
-predictors = c("Gender", "District","Age")
+predictors = c("Gender", "Age", "District")
 customersMV = sapply(customers[predictors], function(x) (!complete.cases(x))+0)
 mvVars = sapply(predictors, function(x) paste("MV",x,sep=""))
 colnames(customersMV) = mvVars
@@ -75,14 +103,11 @@ customersBT = subset(customers, select=c("CustomerID", "Churn", predictors))
 customersBT = cbind(customersBT, customersMV)
 
 # Remove missing values indicators when there are no missing values
-rmMissValInd = function(predVar,bron)
-   {
-      for (p in predictors) if(sum(bron[paste("MV", p, sep="")])==0) bron[paste("MV",p,sep="")] <- NULL
-      bron
-   }
-customersBT = rmMissValInd(predictors,customersBT)
+for (p in predictors){
+  if(sum(customersBT[paste("MV", p, sep="")])==0) customersBT[paste("MV",p,sep="")] <- NULL
+}
 
-customersBT[c("Gender", "District","Age")] = imputeMissings(customersBT[c("Gender", "District","Age")])
+customersBT[predictors] = imputeMissings(customersBT[predictors])
 customersBT = dummy.data.frame(customersBT, c("Gender", "District"), sep='_')
 
 ########
@@ -107,26 +132,10 @@ missToZero = c("NbrNewspapers", "NbrStart", "NetFormulaPrice", "TotalCredit")
 missOther = c("RenewalDate", "PaymentDate")
 
 predictors = c(missToMean, missToZero, missOther)
-# predTable = subset(subscriptions, select=(predictors))
-# mvVars = sapply(predictors, function(x) paste("MV",x,sep=""))
-# mvTable = aggregate(predTable, subscriptions["CustomerID"], mvProp)
-# subscriptionsBT = setNames(mvTable, c("CustomerID", mvVars))
-
-#automating the process to create missingVar
-#predvar = independent variables for whom missing var need to be created
-#bron    = source table
-#byVar   = grouping variable
-missingVarAuto = function (predVar,bron,byVar)
-   {
-      predTable = subset(bron,select=c(predVar))
-      mvVars    = sapply(predVar, function(x) paste0("MV",x))
-      mvTable   = aggregate(predTable,bron[byVar],mvProp)
-      suffix    = "BT"
-      rhs       = "=setNames(mvTable,c(byVar,mvVars))"
-      eval(parse(text=paste0(deparse(quote(bron)),suffix,rhs)))
-   }
-#function call
-missingVarAuto (predictors,subscriptions,"CustomerID")
+subscriptionsBT = unique(subscriptions["CustomerID"])
+for(p in predictors){
+  subscriptionsBT = aggr(subscriptions, subscriptionsBT, p, paste("MV",p,sep=""), "CustomerID", "mvProp")
+}
 
 # Impute the 0
 sub = subset(subscriptions, select=missToZero)
@@ -148,70 +157,51 @@ for(p in predictors){
 }
 
 # Number of subscriptions per customers
-subscriptionsNb = aggregate(list(SubscriptionsNb=subscriptions$StartDate), subscriptions["CustomerID"], length)
+subscriptionsNb <- data.frame(table(subscriptions$CustomerID))
+colnames(subscriptionsNb)[1:2] <- c("CustomerID", "SubscriptionsNb")
 subscriptionsBT = merge(subscriptionsBT, subscriptionsNb, by="CustomerID")
 
 # Total subscription duration
 subscriptions["Duration"] <- subscriptions["EndDate"] - subscriptions["StartDate"]
-totSubDuration = aggregate(list(TotSubDuration=subscriptions$Duration), subscriptions["CustomerID"], sum)
-totSubDuration[,"TotSubDuration"] = round(totSubDuration[,"TotSubDuration"], 2)
-subscriptionsBT = merge(subscriptionsBT, totSubDuration, by="CustomerID")
+subscriptionsBT = aggr(subscriptions, subscriptionsBT, "Duration", "TotSubDuration", "CustomerID", "sum")
 
 # Mean number of newspapers
-meanNbrNP = aggregate(list(MeanNbrNP=subscriptions$NbrNewspapers), subscriptions["CustomerID"], mean)
-meanNbrNP[,"MeanNbrNP"] = round(meanNbrNP[,"MeanNbrNP"], 2)
-subscriptionsBT = merge(subscriptionsBT, meanNbrNP, by="CustomerID")
+subscriptionsBT = aggr(subscriptions, subscriptionsBT, "NbrNewspapers", "MeanNbrNP", "CustomerID", "mean")
 
 # Mean number of start newspapers
-meanNbrStartNP = aggregate(list(MeanNbrStartNP=subscriptions$NbrStart), subscriptions["CustomerID"], mean)
-meanNbrStartNP[,"MeanNbrStartNP"] = round(meanNbrStartNP[,"MeanNbrStartNP"], 2)
-subscriptionsBT = merge(subscriptionsBT, meanNbrStartNP, by="CustomerID")
+subscriptionsBT = aggr(subscriptions, subscriptionsBT, "NbrStart", "MeanNbrStartNP", "CustomerID", "mean")
 
 subscriptionsRenew = subset(subscriptions, RenewalDate <= endIP, select=c("CustomerID", "EndDate", "RenewalDate"))
 
 # Mean renewal duration
 subscriptionsRenew["RenewDuration"] = subscriptionsRenew["EndDate"] - subscriptionsRenew["RenewalDate"]
-meanRenewDuration = aggregate(list(MeanRenewDuration=subscriptionsRenew$RenewDuration), subscriptionsRenew["CustomerID"], mean)
-subscriptionsBT = merge(subscriptionsBT, meanRenewDuration, by="CustomerID")
-subscriptionsBT["MeanRenewDuration"] = as.numeric(subscriptionsBT$MeanRenewDuration) / as.numeric(subscriptionsBT$TotSubDuration) 
-subscriptionsBT[,"MeanRenewDuration"] = round(subscriptionsBT[,"MeanRenewDuration"], 2)
+subscriptionsBT = aggr(subscriptionsRenew, subscriptionsBT, "RenewDuration", "MeanRenewDuration", "CustomerID", "mean")
+subscriptionsBT$MeanRenewDuration = round(as.numeric(subscriptionsBT$MeanRenewDuration) / as.numeric(subscriptionsBT$TotSubDuration), 2)
 
 # Time since last renewal
-subscriptionsRenew = aggregate(list(RenewalDate=subscriptionsRenew$RenewalDate), subscriptionsRenew["CustomerID"], max)
-subscriptionsRenew$TimeSinceLastRen = endIP - subscriptionsRenew$RenewalDate
-subscriptionsBT = merge(subscriptionsBT, subscriptionsRenew[c("CustomerID", "TimeSinceLastRen")], by="CustomerID")
+subscriptionsBT = aggr(subscriptionsRenew, subscriptionsBT, "RenewalDate", "TimeSinceLastRen", "CustomerID", "function(x) endIP-max(x)")
+
+# Total Number of Renewals per Customer
+subscriptionsBT = aggr(subscriptionsRenew, subscriptionsBT, "RenewalDate", "TotNbrRenew", "CustomerID", "length")
 
 # Number of payment type
-nbrPaymentType = aggregate(subscriptions["PaymentType"], subscriptions["CustomerID"], table)
-nbrPaymentType = sapply(nbrPaymentType, unlist)
-subscriptionsBT = merge(subscriptionsBT, nbrPaymentType, by="CustomerID")
+subscriptionsBT = aggr(subscriptions, subscriptionsBT, "PaymentType", "PaymentType", "CustomerID", "table")
 
 # Number of payment status
-nbrPaymentStatus = aggregate(subscriptions["PaymentStatus"], subscriptions["CustomerID"], table)
-nbrPaymentStatus = sapply(nbrPaymentStatus, unlist)
-subscriptionsBT = merge(subscriptionsBT, nbrPaymentStatus, by="CustomerID")
+subscriptionsBT = aggr(subscriptions, subscriptionsBT, "PaymentStatus", "PaymentStatus", "CustomerID", "table")
 
 # Mean time before payment
 subscriptions["PaymentTime"] <- subscriptions["PaymentDate"] - subscriptions["StartDate"]
-meanPayTime= aggregate(list(MeanPayTime=subscriptions$PaymentTime), subscriptions["CustomerID"], mean)
-meanPayTime[,"MeanPayTime"] = round(meanPayTime[,"MeanPayTime"], 2)
-subscriptionsBT = merge(subscriptionsBT, meanPayTime, by="CustomerID")
+subscriptionsBT = aggr(subscriptions, subscriptionsBT, "PaymentTime", "MeanPayTime", "CustomerID", "mean")
 
 # Mean and total net formula price
-meanNetForPrice = aggregate(list(MeanNetForPrice=subscriptions$NetFormulaPrice), subscriptions["CustomerID"], mean)
-meanNetForPrice[,"MeanNetForPrice"] = round(meanNetForPrice[,"MeanNetForPrice"], 2)
-totNetForPrice = aggregate(list(totNetForPrice=subscriptions$NetFormulaPrice), subscriptions["CustomerID"], sum)
-subscriptionsBT = Reduce(function(x, y) merge(x, y, by="CustomerID"), list(subscriptionsBT, meanNetForPrice, totNetForPrice))
+subscriptionsBT = aggr(subscriptions, subscriptionsBT, "NetFormulaPrice", "MeanNetForPrice", "CustomerID", "mean")
+subscriptionsBT = aggr(subscriptions, subscriptionsBT, "NetFormulaPrice", "TotNetForPrice", "CustomerID", "sum")
 
 # Mean total credit
-meanTotCredit = aggregate(list(MeanTotCredit=subscriptions$TotalCredit), subscriptions["CustomerID"], mean)
-meanTotCredit[,"MeanTotCredit"] = round(meanTotCredit[,"MeanTotCredit"], 2)
-subscriptionsBT = merge(subscriptionsBT, meanTotCredit, by="CustomerID")
+subscriptionsBT = aggr(subscriptions, subscriptionsBT, "TotalCredit", "MeanTotCredit", "CustomerID", "mean")
 
-# Total Number of Renewals per Customer
-totNrRen = aggregate(list(totNrRen=subscriptions$RenewalDate), subscriptions["CustomerID"], length)
-subscriptionsBT = merge(subscriptionsBT, totNrRen, by="CustomerID")
-
+########
 # Base table generation: credit
 ########
 
@@ -230,15 +220,12 @@ missToMean = c("ActionType", "CreditSource")
 # Columns for which the missing values should be replaced by 0
 missToZero = c("Amount")
 
-# Per subscriptions: Missing values
+# Per subscriptions: Missing values - TEMP
 predictors = c(missToMean, missToZero)
-# predTable = subset(credit, select=(predictors))
-# mvVars = sapply(predictors, function(x) paste("MV",x,sep=""))
-# mvTable = aggregate(predTable, credit["SubscriptionID"], mvProp)
-# creditBT = setNames(mvTable, c("SubscriptionID", mvVars))
-
-#function call
-missingVarAuto (predictors,credit,"SubscriptionID")
+creditBT = unique(credit["SubscriptionID"])
+for(p in predictors){
+  creditBT = aggr(credit, creditBT, p, paste("MV",p,sep=""), "SubscriptionID", "mvProp")
+}
 
 #credit <- imputeMissings(credit)
 
@@ -256,29 +243,23 @@ for(p in predictors){
 }
 
 # Per subscriptions: Number of credits
-creditNb = aggregate(list(CreditNb=credit$ActionType), credit["SubscriptionID"], length)
+creditNb <- data.frame(table(credit$SubscriptionID))
+colnames(creditNb)[1:2] <- c("SubscriptionID", "CreditNb")
 creditBT = merge(creditBT, creditNb, by="SubscriptionID")
 
 # Per subscriptions: Number of action type
-nbrCreActionType = aggregate(credit["ActionType"], credit["SubscriptionID"], table)
-nbrCreActionType = sapply(nbrCreActionType, unlist)
-creditBT = merge(creditBT, nbrCreActionType, by="SubscriptionID")
+creditBT = aggr(credit, creditBT, "ActionType", "ActionType", "SubscriptionID", "table")
 
 # Per subscriptions: Number of credit source
-nbrCreSource = aggregate(credit["CreditSource"], credit["SubscriptionID"], table)
-nbrCreSource = sapply(nbrCreSource, unlist)
-creditBT = merge(creditBT, nbrCreSource, by="SubscriptionID")
+creditBT = aggr(credit, creditBT, "CreditSource", "CreditSource", "SubscriptionID", "table")
 
 # Per subscriptiosn: Total amount
-TotCreAmount = aggregate(list(TotCreAmount=credit$Amount), credit["SubscriptionID"], sum)
-TotCreAmount[,"TotCreAmount"] = round(TotCreAmount[,"TotCreAmount"], 2)
-creditBT = merge(creditBT, TotCreAmount, by="SubscriptionID")
+creditBT = aggr(credit, creditBT, "Amount", "TotCreAmount", "SubscriptionID", "sum")
 
 # Per customers: Total credits number, amount, action types and sources
 subSub = subset(subscriptions, select=c("SubscriptionID", "CustomerID"))
 creditBT = merge(creditBT, subSub, by="SubscriptionID")
-subCre = creditBT[!(names(creditBT) %in% c("CustomerID", "SubscriptionID"))]
-creditBT = aggregate(subCre, creditBT["CustomerID"], sum)
+creditBT = aggregate(creditBT[!names(creditBT) %in% c("CustomerID", "SubscriptionID")], creditBT["CustomerID"], sum)
 
 ########
 # Base table generation: delivery
@@ -298,15 +279,12 @@ delivery = subset(delivery, StartDate <= endIP)
 #  if(is.factor(delivery[,n])) delivery[,n] <- factor(delivery[,n])
 #}
 
-# Per subscriptions: Missing values
+# Per subscriptions: Missing values - TEMP
 predictors = c("DeliveryType", "DeliveryClass", "DeliveryContext")
-# predTable = subset(delivery, select=(predictors))
-# mvVars = sapply(predictors, function(x) paste("MV",x,sep=""))
-# mvTable = aggregate(predTable, delivery["SubscriptionID"], mvProp)
-# deliveryBT = setNames(mvTable, c("SubscriptionID", mvVars))
-
-#function call
-missingVarAuto (predictors,delivery,"SubscriptionID")
+deliveryBT = unique(delivery["SubscriptionID"])
+for(p in predictors){
+  deliveryBT = aggr(delivery, deliveryBT, p, paste("MV",p,sep=""), "SubscriptionID", "mvProp")
+}
 
 # Impute the mean and mode
 delivery[, names(delivery) %in% predictors] <- imputeMissings(delivery[, names(delivery) %in% predictors])
@@ -317,19 +295,19 @@ for(p in predictors){
 }
 
 # Per subscriptions: Number of deliveries
-deliveryNb = aggregate(list(DeliveryNb=delivery$DeliveryType), delivery["SubscriptionID"], length)
+deliveryNb <- data.frame(table(delivery$SubscriptionID))
+colnames(deliveryNb)[1:2] <- c("SubscriptionID", "deliveryNb")
+deliveryBT = merge(deliveryBT, deliveryNb, by="SubscriptionID")
 
 # Per subscriptions: Number of delivery type, class and context
-subDel = delivery[(names(delivery) %in% c("DeliveryType", "DeliveryClass", "DeliveryContext"))]
-deliveryBT = aggregate(subDel, delivery["SubscriptionID"], table)
-deliveryBT = sapply(deliveryBT, unlist)
-deliveryBT = Reduce(function(x, y) merge(x, y, by="SubscriptionID"), list(deliveryNb, deliveryBT))
+deliveryBT = aggr(delivery, deliveryBT, "DeliveryType", "DeliveryType", "SubscriptionID", "table")
+deliveryBT = aggr(delivery, deliveryBT, "DeliveryClass", "DeliveryClass", "SubscriptionID", "table")
+deliveryBT = aggr(delivery, deliveryBT, "DeliveryContext", "DeliveryContext", "SubscriptionID", "table")
 
 # Per customers: Total delivery number, types, class and context
 subSub = subset(subscriptions, select=c("SubscriptionID", "CustomerID"))
 deliveryBT = merge(deliveryBT, subSub, by="SubscriptionID")
-subDel = deliveryBT[!(names(deliveryBT) %in% c("CustomerID", "SubscriptionID"))]
-deliveryBT = aggregate(subDel, deliveryBT["CustomerID"], sum)
+deliveryBT = aggregate(deliveryBT[!names(deliveryBT) %in% c("CustomerID", "SubscriptionID")], deliveryBT["CustomerID"], sum)
 
 ########
 # Base table generation: complaints
@@ -344,18 +322,20 @@ complaints = subset(complaints, ComplaintDate <= endIP)
 
 # Missing values
 
-# Per subscriptions: Missing values
+# Per subscriptions: Missing values - TEMP
 missToMean = c("ComplaintType", "SolutionType")
-# predTable = subset(complaints, select=(missToMean))
-# mvVars = sapply(missToMean, function(x) paste("MV",x,sep=""))
-# mvTable = aggregate(predTable, complaints["CustomerID"], mvProp)
-# complaintsBT = setNames(mvTable, c("CustomerID", mvVars))
+complaintsBT = unique(complaints["CustomerID"])
+for(p in missToMean){
+  complaintsBT = aggr(complaints, complaintsBT, p, paste("MV",p,sep=""), "CustomerID", "mvProp")
+}
 
-#function call
-missingVarAuto (predictors,complaints,"CustomerID")
+# Remove missing values indicators when there are no missing values
+for(p in missToMean){
+  if(sum(complaintsBT[paste("MV",p,sep="")])==0) complaintsBT[paste("MV",p,sep="")] <- NULL
+}
 
-# Impute the mean and mode
-complaints[, names(complaints) == "MVComplaintType"] <- imputeMissings(complaints[, names(complaints) == "MVComplaintType"])
+# Impute the mode
+complaints["ComplaintType"] <- imputeMissings(complaints["ComplaintType"])
 
 # Finding Nr of Complaints per customer
 complaintsNb <- data.frame(table(complaints$CustomerID))
@@ -363,57 +343,39 @@ colnames(complaintsNb)[1:2] <- c("CustomerID", "ComplaintsNb")
 complaintsBT = merge(complaintsBT, complaintsNb, by="CustomerID")
 
 #Finding #days since last complaint
-lastComDates <- aggregate(list(LastComDate=complaints$ComplaintDate), complaints['CustomerID'], max)
-lastComDates$DaysSinceLastCom <- endIP - lastComDates$LastComDate
-lastComDates$LastComDate = NULL
-complaintsBT = merge(complaintsBT, lastComDates, by="CustomerID")
+complaintsBT = aggr(complaints, complaintsBT, "ComplaintDate", "DaysSinceLastCom", "CustomerID", "function(x) endIP-max(x)")
 
 # % of complaints solved = nb of complaints solved / nb of complaints
-comSolvedNb = aggregate(list(ComSolvedNb=complaints$SolutionType), complaints['CustomerID'], function(x) sum(!is.na(x)))
-complaintsBT = merge(complaintsBT, comSolvedNb, by="CustomerID")
-complaintsBT$ComSolvingPercent = round(complaintsBT$ComSolvedNb / complaintsBT$ComplaintsNb, 2)
-complaintsBT$ComSolvedNb = NULL
+complaintsBT = aggr(complaints, complaintsBT, "SolutionType", "ComSolvingPercent", "CustomerID", "function(x) sum(!is.na(x))")
+complaintsBT$ComSolvingPercent = round(complaintsBT$ComSolvingPercent / complaintsBT$ComplaintsNb, 2)
 
-# Remove missing values indicators when there are no missing values
-for(p in missToMean){
-  if(sum(complaintsBT[paste("MV",p,sep="")])==0) complaintsBT[paste("MV",p,sep="")] <- NULL
-}
-
-# Impute the mean and mode
-complaints[, names(complaints) == "MVSolutionType"] <- imputeMissings(complaints[, names(complaints) == "MVSolutionType"])
+# Impute the mode of solution type because we needed the number of NA above
+complaints["SolutionType"] <- imputeMissings(complaints["SolutionType"])
 
 # Number of complaint type
-nbrComplaintType = aggregate(complaints["ComplaintType"], complaints["CustomerID"], table)
-nbrComplaintType = sapply(nbrComplaintType, unlist)
-complaintsBT = merge(complaintsBT, nbrComplaintType, by="CustomerID")
+complaintsBT = aggr(complaints, complaintsBT, "ComplaintType", "ComplaintType", "CustomerID", "table")
 
 # Number of solution type
-nbrSolutionType = aggregate(complaints["SolutionType"], complaints["CustomerID"], table)
-nbrSolutionType = sapply(nbrSolutionType, unlist)
-complaintsBT = merge(complaintsBT, nbrSolutionType, by="CustomerID")
+complaintsBT = aggr(complaints, complaintsBT, "SolutionType", "SolutionType", "CustomerID", "table")
 
 ########
 # Base table generation: formula
 ########
 
-# Missing values
-tmp_subs_formula = subset(subscriptions, select = c(SubscriptionID, StartDate, EndDate,CustomerID ,FormulaID))
+subsFormula = subset(subscriptions, select = c(SubscriptionID, StartDate, EndDate, CustomerID, FormulaID))
 
-#merging the tmp_subs_formula and formula data frames
-merged_subs_formula <- merge(tmp_subs_formula, formula, by = "FormulaID")
+#merging the subsFormula and formula table
+mergedSubsformula <- merge(subsFormula, formula, by = "FormulaID")
 
-# Missing values
+# Missing values - TMP
 predictors = c("FormulaType", "Duration")
-# predTable = subset(merged_subs_formula, select=(predictors))
-# mvVars = sapply(predictors, function(x) paste("MV",x,sep=""))
-# mvTable = aggregate(predTable, merged_subs_formula["CustomerID"], mvProp)
-# formulaBT = setNames(mvTable, c("CustomerID", mvVars))
-
-#function call
-missingVarAuto (predictors,formula,"CustomerID")
+formulaBT = unique(mergedSubsformula["CustomerID"])
+for(p in predictors){
+  formulaBT = aggr(mergedSubsformula, formulaBT, p, paste("MV",p,sep=""), "CustomerID", "mvProp")
+}
 
 # Impute the mean and mode
-merged_subs_formula[, names(merged_subs_formula) %in% predictors] <- imputeMissings(merged_subs_formula[, names(merged_subs_formula) %in% predictors])
+mergedSubsformula[, names(mergedSubsformula) %in% predictors] <- imputeMissings(mergedSubsformula[, names(mergedSubsformula) %in% predictors])
 
 # Remove missing values indicators when there are no missing values
 for(p in predictors){
@@ -421,15 +383,8 @@ for(p in predictors){
 }
 
 #calculating aggegrate values for columns Duration and FormulaType
-aggr_ct_reg_cam <- aggregate(merged_subs_formula["FormulaType"], merged_subs_formula["CustomerID"], table)
-aggr_ct_reg_cam <- sapply(aggr_ct_reg_cam,unlist)
-
-aggr_ct_Duration <- aggregate(merged_subs_formula["Duration"], merged_subs_formula["CustomerID"], table)
-aggr_ct_Duration <- as.data.frame(sapply(aggr_ct_Duration,unlist))
-
-#summary table containing one row per customer from formula table
-tables = list(formulaBT, aggr_ct_reg_cam, aggr_ct_Duration)
-formulaBT = Reduce(function(x, y) merge(x, y, by='CustomerID'), tables)
+formulaBT = aggr(mergedSubsformula, formulaBT, "FormulaType", "FormulaType", "CustomerID", "table")
+formulaBT = aggr(mergedSubsformula, formulaBT, "Duration", "Duration", "CustomerID", "table")
 
 ########
 # Base table generation: global merging
@@ -438,9 +393,10 @@ formulaBT = Reduce(function(x, y) merge(x, y, by='CustomerID'), tables)
 subBaseTable = list(customersBT, subscriptionsBT, creditBT, deliveryBT, complaintsBT, formulaBT)
 baseTable = Reduce(function(x, y) merge(x, y, by='CustomerID', all=TRUE), subBaseTable)
 baseTable[is.na(baseTable)]  <- 0
+
 print(Sys.time()-StartTime)
-save(baseTable, file='baseTable.Rdata')
-# load('baseTable.Rdata')
+save(baseTable, file='baseTable73.Rdata')
+# load('baseTable73.Rdata')
 
 ########
 # Modeling
@@ -530,10 +486,8 @@ predAB <- as.numeric(predict(ABmodel, testTable, type="probs")[,2])
 # Evaluation
 scores["Boosting"] = AUC::auc(roc(predAB, churnTest))
 
-varplot(ABmodel)
-#getting them in a character string
+# Variable importances in a character string
 varplot(ABmodel,type="scores")
-summary(ABmodel)
 
 #####
 # Random forest
@@ -686,7 +640,7 @@ for (i in 1:n){
 }
 finalScores = t(scores)
 colnames(finalScores) = c("Mean", "Min", "Max")
-save(scores, file='scores5/3.Rdata')
+save(scores, file='scores53.Rdata')
 
 #####
 # All roc curves
