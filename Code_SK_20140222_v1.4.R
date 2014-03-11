@@ -1,3 +1,12 @@
+
+#things to change in syl code
+#improve speed;aggr in deliveries;nr of deliveries, nr of credits, nr complaints, add recency, 
+#add time since last renewal
+
+
+
+
+   
 ################################################
 #1 Understanding the Data
 ################################################
@@ -10,24 +19,29 @@ setwd("/Users/SKarkhanis/Desktop/MMA_UGent/2013_2014/06_Marketing_Models_&_Engin
 ################################################
 
 #subscriptions
-subscriptions <- read.table("subscriptions.txt",header=TRUE, sep=";", colClasses=c("character","character","character","character","character","character","integer","integer","character","factor","factor","character","character","numeric","numeric","numeric","numeric","numeric","numeric","numeric","numeric"))
+subscriptions <- read.table("subscriptions.txt", header=TRUE, sep=";", colClasses=c("character","character","character","character","character","character","integer","integer","character","factor","factor","character","character","numeric","numeric","numeric","numeric","numeric","numeric","numeric","numeric"))
 str(subscriptions);
 
 #customers
 customers <-read.table("customers.txt", header=TRUE, sep=";",colClasses=c("character","factor","character","character","character","character"))
+customers[customers==""]  <- NA
 
 #Delivery
-delivery <-read.table("delivery.txt", header=TRUE, sep=";",colClasses=c("character","character","character","character","character","character"),na.strings = "NA" )
+delivery <-read.table("delivery.txt", header=TRUE, sep=";",colClasses=c("character","character","character","character","character","character"))
+delivery[delivery==""]  <- NA
 
 #Formula
-formula <-read.table("formula.txt", header=TRUE, sep=";",colClasses=c("character","character","character","character" ),na.strings = "NA" )
+formula <-read.table("formula.txt", header=TRUE, sep=";",colClasses=c("character","character","character","character" ))
+formula[formula==""]  <- NA
 
 #Credit
-credit <-read.table("credit.txt", header=TRUE, sep=";",colClasses=c("character","character","character","character","numeric","numeric"),na.strings = "NA" )
+credit <-read.table("credit.txt", header=TRUE, sep=";",colClasses=c("character","character","character","character","numeric","numeric"))
+credit[credit==""]  <- NA
 
 #Complaints
 complaints <-read.table("complaints.txt", header=TRUE, sep=";",colClasses=c("character","character","character","character","character","character","character" ))
 complaints[complaints==""]  <- NA
+
 #################################################
 # DEFINING THE TIME WINDOW
 #################################################
@@ -48,6 +62,14 @@ summary(subscriptions$StartDate)
 
 #Min.          1st Qu.       Median       Mean       3rd Qu.         Max. 
 #"2006-01-02" "2008-01-01" "2009-03-04" "2009-01-24" "2010-03-18" "2012-01-28" 
+
+summary(subscriptions$EndDate)
+##Min.      1st Qu. 
+#"2007-01-02" "2008-07-09" 
+#Median         Mean 
+#"2009-10-17" "2009-09-13" 
+#3rd Qu.         Max. 
+#"2010-10-12" "2075-01-01"
 
 # setting the format for date
 Date_format <- "%d/%m/%Y"
@@ -189,7 +211,7 @@ Cust_LOR$StartDate <- NULL
 ################Imputing Gender
 #customers[,names(customers) == "Gender"] <- imputeMissings(customers[,names(customers) == "Gender"])
 #customers[,names(customers) %in% c("Gender")] <- imputeMissings(customers[,names(customers) %in% c("Gender")])
-customers <- dummy.data.frame(data=customers,names=c("Gender"),sep="_")
+customers2 <- dummy.data.frame(data=customers,names=c("Gender"),sep="_")
 customers$Impu_Gender <- customers$Gender_M + customers$Gender_NA
 
 
@@ -305,3 +327,16 @@ last_enddate <- aggregate(subscriptions["EndDate"], subscriptions['CustomerID'],
 cust = merge(first_startdate, last_enddate, by='CustomerID')
 active_Customers  <- subset(cust,(StartDate <= end_IP & EndDate >= start_DP))
 churned_Customers <- subset(active_Customers, EndDate<= end_DP)
+
+
+last_rendate <- aggregate(subscriptions["RenewalDate"], subscriptions['CustomerID'], FUN=max, na.rm=TRUE )
+
+#last_rendate <- imputeMissings(last_rendate) # does not work
+
+#deleting rows with (last_rendate$RenewalDate) as NA
+last_rendate <- last_rendate[!is.na(as.character(last_rendate$RenewalDate)),]
+#calculating nr days since last ren
+last_rendate$nr_days_from_last_renewal <- end_IP - last_rendate$RenewalDate
+
+#x[,3] <- ifelse(x$V1==1,1,0)
+imp_median <- function(x) {ifelse(is.na(x), as.date(median(x),Date_format),x)}
