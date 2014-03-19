@@ -2,7 +2,7 @@
 
 ModelBuilding <- function(start.ind, end.ind, start.dep, end.dep){
    initialization <<- function(){
-    packages = c("aCRM", "dummies", "ada", "AUC")
+    packages = c("aCRM", "dummies", "ada")
     for (p in packages){
       require(p, character.only=TRUE)
     }
@@ -44,7 +44,7 @@ ModelBuilding <- function(start.ind, end.ind, start.dep, end.dep){
       table
     }
     
-    # Create missg values indicator columns
+    # Create missing values indicator columns
     createMissValInd <<- function (table, predictors, byVar){
       bT = unique(table[byVar])
       for(p in predictors) bT = aggr(table, bT, p, paste("MV",p,sep=""), byVar, "mvProp")
@@ -59,7 +59,7 @@ ModelBuilding <- function(start.ind, end.ind, start.dep, end.dep){
     delivery <- read.table("delivery.txt", header=TRUE, sep=";", colClasses=c("character", "factor", "factor", "factor", "character", "character"), na.string=c("",".","NA"))
     formula <- read.table("formula.txt", header=TRUE, sep=";", colClasses=c("character", "character", "factor", "factor"), na.string=c("",".","NA"))
     subscriptions <- read.table("subscriptions.txt", header=TRUE, sep=";", colClasses=c("character","character","character","character","character","character","integer","integer","character","factor","factor","character","character","numeric","numeric","numeric","numeric","numeric","numeric","numeric","numeric"), na.string=c("",".","NA"))
-          
+              
     ########
     # Base table generation: customers
     ########
@@ -77,6 +77,7 @@ ModelBuilding <- function(start.ind, end.ind, start.dep, end.dep){
     customers$Age = endIP - as.Date(customers$DOB, dateFormat)
     
     predictors = c("Gender", "Age", "District")
+    allMeanMV = predictors
     customersMV = sapply(customers[predictors], function(x) (!complete.cases(x))+0)
     mvVars = sapply(predictors, function(x) paste("MV",x,sep=""))
     colnames(customersMV) = mvVars
@@ -296,6 +297,7 @@ ModelBuilding <- function(start.ind, end.ind, start.dep, end.dep){
     # % of complaints solved = nb of complaints solved / nb of complaints
     complaintsBT = aggr(complaints, complaintsBT, "SolutionType", "ComSolvingPercent", "CustomerID", "function(x) sum(!is.na(x))")
     complaintsBT$ComSolvingPercent = round(complaintsBT$ComSolvingPercent / complaintsBT$ComplaintsNb, 2)
+    allMeanMV = c(allMeanMV, "ComSolvingPercent")
     
     # Impute the mode of solution type because we needed the number of NA above
     complaints["SolutionType"] <- imputeMissings(complaints["SolutionType"])
@@ -333,7 +335,20 @@ ModelBuilding <- function(start.ind, end.ind, start.dep, end.dep){
     
     subBaseTable = list(customersBT, subscriptionsBT, creditBT, deliveryBT, complaintsBT, formulaBT)
     baseTable = Reduce(function(x, y) merge(x, y, by='CustomerID', all=TRUE), subBaseTable)
-    baseTable[is.na(baseTable)]  <- 0
+    
+    # Impute the 0
+    sub = subset(baseTable, select=setdiff(names(baseTable), c(allMeanMV, "DaysSinceLastCom")))
+    sub[is.na(sub) == "TRUE"] <- 0 
+    baseTable[, setdiff(names(baseTable), c(allMeanMV, "DaysSinceLastCom"))] <- sub 
+    
+    # Impute the mean and mode
+    cols = intersect(names(baseTable), allMeanMV)
+    for(c in cols) baseTable[, c] = as.numeric(baseTable[, c])
+    baseTable[, cols] <- imputeMissings(baseTable[, cols])
+    
+    # Impute DaySinceLastCom with lenght of the independent period
+    baseTable$DaysSinceLastCom[is.na(baseTable$DaysSinceLastCom)] <- endIP-startIP
+    
     baseTable
   }
   ########
@@ -360,44 +375,33 @@ ModelBuilding <- function(start.ind, end.ind, start.dep, end.dep){
   }
   churn <- baseTable$Churn
   baseTable$Churn <- NULL  
-  #print(dim(baseTable))
-  #View(baseTable)
+   
   # Columns to keep
   colToKeep = names(baseTable)
   baseTable <- data.frame(sapply(baseTable, function(x) as.numeric(as.character(x))))
-  # Create the model
+  
+   # Create the model
   ABmodel <- ada(churn ~ . , baseTable, iter=50)
-  ret = list(ABmodel, colToKeep, endIP-startIP)
-  ret
+  list(ABmodel, colToKeep, endIP-startIP, startDP-endIP)
 }
 
-ModelingDeployment <- function(object, end.ind){
+ModelDeployment <- function(object, end.ind){
   dateFormat <- "%d/%m/%Y"
   endIP <- as.Date(end.ind, dateFormat)
   startIP = endIP - object[[3]]
-  startDP = endIP
+  startDP = endIP + object[[4]]
   endDP  = seq(startDP, length=2, by="years")[2]
   
   initialization()
-  baseTable2 = dataCleaning(startIP, endIP, startDP, endDP, dateFormat, "test")
+  baseTable = dataCleaning(startIP, endIP, startDP, endDP, dateFormat, "test")
   
-  customerID = baseTable2$CustomerID
-  baseTable2 <- baseTable2[names(baseTable2) != "CustomerID"]
-  churn <- baseTable2$Churn
-  baseTable2$Churn <- NULL
-  for(c in names(baseTable2)) if(!c %in% object[[2]]) baseTable2[c] = NULL 
-  for(c in object[[2]]) if(!c %in% names(baseTable2)) baseTable2[c] = 0
-  #print(dim(baseTable2))
-  #View(baseTable2)
-  baseTable2 <- data.frame(sapply(baseTable2, function(x) as.numeric(as.character(x))))
-  predAB <- as.numeric(predict(object[[1]], baseTable2, type="probs")[,2])
-  print(AUC::auc(roc(predAB, churn)))
-  pred = ifelse(predAB<= 0.5,0,1)
-  ret = cbind(customerID, pred, churn)
-  ret
+  customerID = baseTable$CustomerID
+  baseTable <- baseTable[names(baseTable) != "CustomerID"]
+  churn <- baseTable$Churn
+  baseTable$Churn <- NULL
+  for(c in names(baseTable)) if(!c %in% object[[2]]) baseTable[c] = NULL 
+  for(c in object[[2]]) if(!c %in% names(baseTable)) baseTable[c] = 0
+  baseTable <- data.frame(sapply(baseTable, function(x) as.numeric(as.character(x))))
+  predAB <- as.numeric(predict(object[[1]], baseTable, type="probs")[,2])
+  cbind(customerID, predAB)
 }
-
-setwd("/home/xclyde/Courses/UGENT/Modeling/Assignment/trainTables")
-model = ModelBuilding("02/01/2006", "01/02/2010", "03/02/2010", "03/02/2011")
-setwd("/home/xclyde/Courses/UGENT/Modeling/Assignment/testTables")
-predictions = ModelingDeployment(model, "01/02/2010")

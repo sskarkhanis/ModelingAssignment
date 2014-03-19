@@ -5,6 +5,8 @@ for (p in packages){
 }
 source("tuneMember.R")
 
+setwd("/home/xclyde/Courses/UGENT/Modeling/Assignment/allTables")
+
 # Compute the proportions of missing values
 mvProp <- function(x){
   round(sum(is.na(x))/length(x), 2)
